@@ -26,6 +26,7 @@ import { InitSessionSuccessResponseSchemaDTO } from '../../src/dtos/ingrid-shipp
 import { CustomError } from '../../src/libs/fastify/errors';
 import { appLogger } from '../../src/libs/logger';
 import { getRequestContext, RequestContextData, updateRequestContext } from '../../src/libs/fastify/context';
+import { deductShippingCostFromCartTotalPrice } from '../../src/services/helpers';
 
 describe('ingrid-shipping.service', () => {
   const mockServer = setupServer();
@@ -979,6 +980,125 @@ describe('ingrid-shipping.service', () => {
         expect.any(Object),
         expect.any(Array),
       );
+    });
+
+    test('should retry pushing the Ingrid session after a concurrent modification (409) from Ingrid', async () => {
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCartById').mockResolvedValue({
+        ...cart,
+        custom: {
+          type: { typeId: 'type', id: 'type-id' },
+          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+        },
+      });
+
+      // Mock getting Ingrid checkout session with a price that will trigger a push
+      const mockSessionWithDifferentPrice = {
+        ...mockIngridCheckoutSessionWithAddresses,
+        session: {
+          ...mockIngridCheckoutSessionWithAddresses.session,
+          cart: {
+            ...mockIngridCheckoutSessionWithAddresses.session.cart,
+            total_value: 3000,
+          },
+        },
+      };
+      jest.spyOn(IngridApiClient.prototype, 'getCheckoutSession').mockResolvedValue(mockSessionWithDifferentPrice);
+
+      jest
+        .spyOn(CommercetoolsApiClient.prototype, 'updateCartWithAddressAndShippingMethod')
+        .mockResolvedValue(cartWithShippingAddress);
+
+      const conflictError = new CustomError({
+        message: 'Request failed with status code 409',
+        code: 'INGRID_API_ERROR',
+        httpErrorStatus: 409,
+      });
+      const updatedSession = {
+        session: {
+          ...mockIngridCheckoutSessionWithAddresses.session,
+          checkout_session_id: 'mock-ingrid-session-id',
+        },
+        html_snippet: '<div>Updated Ingrid Checkout</div>',
+      };
+      const updateSessionSpy = jest
+        .spyOn(IngridApiClient.prototype, 'updateCheckoutSession')
+        .mockRejectedValueOnce(conflictError)
+        .mockResolvedValueOnce(updatedSession);
+
+      const result = await shippingService.update();
+
+      expect(result.data).toEqual({
+        success: true,
+        cartVersion: cartWithShippingAddress.version,
+        ingridSessionId: 'mock-ingrid-session-id',
+      });
+      expect(updateSessionSpy).toHaveBeenCalledTimes(2);
+      // the retry re-pulled the session before resubmitting
+      expect(IngridApiClient.prototype.getCheckoutSession).toHaveBeenCalledTimes(2);
+    });
+
+    test('should not resend the Ingrid session update when a concurrent change already resolved the price drift', async () => {
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCartById').mockResolvedValue({
+        ...cart,
+        custom: {
+          type: { typeId: 'type', id: 'type-id' },
+          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+        },
+      });
+
+      // Mock updating cart with addresses and shipping method
+      jest
+        .spyOn(CommercetoolsApiClient.prototype, 'updateCartWithAddressAndShippingMethod')
+        .mockResolvedValue(cartWithShippingAddress);
+
+      const commercetoolsTotalTaxedValue = deductShippingCostFromCartTotalPrice(cartWithShippingAddress);
+
+      const mockSessionWithDifferentPrice = {
+        ...mockIngridCheckoutSessionWithAddresses,
+        session: {
+          ...mockIngridCheckoutSessionWithAddresses.session,
+          cart: {
+            ...mockIngridCheckoutSessionWithAddresses.session.cart,
+            total_value: commercetoolsTotalTaxedValue + 1000,
+          },
+        },
+      };
+      // the re-pull after the 409 shows the session now already matches the cart total
+      const mockSessionNowConsistent = {
+        ...mockIngridCheckoutSessionWithAddresses,
+        session: {
+          ...mockIngridCheckoutSessionWithAddresses.session,
+          cart: {
+            ...mockIngridCheckoutSessionWithAddresses.session.cart,
+            total_value: commercetoolsTotalTaxedValue,
+          },
+        },
+      };
+      jest
+        .spyOn(IngridApiClient.prototype, 'getCheckoutSession')
+        .mockResolvedValueOnce(mockSessionWithDifferentPrice)
+        .mockResolvedValueOnce(mockSessionNowConsistent);
+
+      const conflictError = new CustomError({
+        message: 'Request failed with status code 409',
+        code: 'INGRID_API_ERROR',
+        httpErrorStatus: 409,
+      });
+      const updateSessionSpy = jest
+        .spyOn(IngridApiClient.prototype, 'updateCheckoutSession')
+        .mockRejectedValueOnce(conflictError);
+
+      const result = await shippingService.update();
+
+      expect(result.data).toEqual({
+        success: true,
+        cartVersion: cartWithShippingAddress.version,
+        ingridSessionId: 'mock-ingrid-session-id',
+      });
+      // it only attempted the push once - the second attempt was skipped since the
+      // re-pulled session already matched the cart total
+      expect(updateSessionSpy).toHaveBeenCalledTimes(1);
+      expect(IngridApiClient.prototype.getCheckoutSession).toHaveBeenCalledTimes(2);
     });
 
     test('should not retry writing the cart on a non-conflict error', async () => {
