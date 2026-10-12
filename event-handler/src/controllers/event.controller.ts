@@ -97,6 +97,25 @@ export const post = async (request: Request, response: Response) => {
       );
     }
     completeCheckoutSessionError = error as Error;
+
+    // The complete call can fail locally (e.g. a timeout) or be rejected (e.g. a 409)
+    // while Ingrid actually already completed the session - check the session's real
+    // status before deciding the completion failed and cancelling the order's shipment.
+    try {
+      const sessionResponse =
+        await ingridClient.getCheckoutSession(ingridSessionId);
+      if (sessionResponse.session.status === 'COMPLETE') {
+        logger.info(
+          `Ingrid session ${ingridSessionId} for order ID ${orderId} is already COMPLETE despite the completion error, proceeding as successful.`
+        );
+        ingridResponse = sessionResponse;
+        completeCheckoutSessionError = undefined;
+      }
+    } catch (lookupError) {
+      logger.error(
+        `Failed to verify Ingrid session status for order ID ${orderId} after completion error: ${lookupError instanceof Error ? lookupError.message : String(lookupError)}`
+      );
+    }
   }
 
   if (ingridResponse) {

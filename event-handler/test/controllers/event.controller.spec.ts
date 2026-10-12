@@ -285,6 +285,111 @@ describe('Event Controller', () => {
     );
   });
 
+  // Test for recovering when Ingrid already completed the session despite a completion error
+  it('should mark shipment ready when Ingrid session is already COMPLETE despite a completion error', async () => {
+    // Setup mocks
+    const mockOrderId = 'test-order-id';
+    const mockVersion = 1;
+    const mockError = new Error('Request failed with status code 409');
+
+    // Mock PubSubValidator
+    (PubSubValidator.validateRequestBody as jest.Mock).mockReturnValue({});
+    (PubSubValidator.validateMessageFormat as jest.Mock).mockReturnValue({});
+    (PubSubValidator.decodeMessageData as jest.Mock).mockReturnValue({});
+    (PubSubValidator.validateDecodedMessage as jest.Mock).mockReturnValue(
+      mockOrderId
+    );
+
+    // Mock createApiRoot get order response
+    const mockCommercetoolsGetOrders = mockApiRootOrderResponse({
+      body: {
+        id: mockOrderId,
+        version: mockVersion,
+        cart: {
+          obj: {
+            custom: {
+              fields: {
+                ingridSessionId: 'test-session-id',
+              },
+            },
+          },
+        },
+        orderNumber: 'test-order-number',
+      },
+    });
+
+    (createApiRoot as MockFn).mockReturnValue({
+      orders: mockCommercetoolsGetOrders,
+    });
+
+    // Mock readConfiguration
+    (readConfiguration as jest.Mock).mockReturnValue({
+      ingridApiKey: 'test-api-key',
+      ingridEnvironment: 'STAGING',
+    });
+
+    jest
+      .spyOn(IngridApiClient.prototype, 'completeCheckoutSession')
+      .mockRejectedValue(mockError);
+
+    const mockIngridSessionResponse: IngridCompleteSessionResponse = {
+      session: {
+        checkout_session_id: 'test-session-id',
+        status: 'COMPLETE',
+        updated_at: new Date().toISOString(),
+        cart: {
+          total_value: 0,
+          total_discount: 0,
+          items: [],
+          cart_id: 'test-cart-id',
+        },
+        delivery_groups: [
+          {
+            addresses: {} as IngridAddresses,
+            category: {} as IngridDeliveryGroupCategory,
+            delivery_time: {} as IngridDeliveryGroupDeliveryTime,
+            group_id: '',
+            header: '',
+            items: [],
+            pricing: {} as IngridDeliveryGroupPricing,
+            selection: {} as IngridDeliveryGroupSelection,
+            shipping: {} as IngridDeliveryGroupShipping,
+            tos_id: 'dummy-tos-id',
+          },
+        ],
+        purchase_country: 'US',
+      },
+    };
+
+    jest
+      .spyOn(IngridApiClient.prototype, 'getCheckoutSession')
+      .mockResolvedValueOnce(mockIngridSessionResponse);
+
+    jest
+      .spyOn(updateClient, 'setTransportOrderId')
+      .mockResolvedValueOnce(orderWithReadyShipmentState);
+
+    jest
+      .spyOn(updateClient, 'changeShipmentState')
+      .mockResolvedValueOnce(orderWithReadyShipmentState);
+
+    // Execute test
+    await post(mockRequest as Request, mockResponse as Response);
+
+    // Verify the session was looked up, the transport order ID was set and the
+    // shipment state was moved to READY instead of being canceled
+    expect(IngridApiClient.prototype.getCheckoutSession).toHaveBeenCalledWith(
+      'test-session-id'
+    );
+    expect(updateClient.setTransportOrderId).toHaveBeenCalled();
+    expect(updateClient.changeShipmentState).toHaveBeenCalledWith(
+      mockOrderId,
+      orderWithReadyShipmentState.version,
+      'Ready'
+    );
+    expect(mockResponse.status).toHaveBeenCalledWith(204);
+  });
+
   // Test for handling retryable errors from ingridClient.completeCheckoutSession
   it('should not update shipment state when the Ingrid call fails with a retryable error', async () => {
     // Setup mocks
