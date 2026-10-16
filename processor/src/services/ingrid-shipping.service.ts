@@ -385,10 +385,10 @@ export class IngridShippingService extends AbstractShippingService {
   }
 
   /**
-   * Updates the cart with the Ingrid session ID
+   * Updates the cart with the Ingrid session ID, and if it fails because the cart was
+   * concurrently modified (409), re-fetches the latest cart version and retries.
    *
-   * @param cartId - The ID of the cart to update
-   * @param cartVersion - The version of the cart to update
+   * @param cart - The cart to update
    * @param ingridSessionId - The Ingrid session ID to set on the cart
    * @param customTypeId - The ID of the custom type to set on the cart
    *
@@ -398,22 +398,48 @@ export class IngridShippingService extends AbstractShippingService {
     cart: Cart,
     ingridSessionId: string,
     customTypeId: string,
+    maxAttempts = 3,
   ): Promise<Cart> {
-    if (!cart.custom) {
-      cart = await this.commercetoolsClient.setCartCustomType(cart.id, cart.version, customTypeId);
+    let currentCart = cart;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        if (!currentCart.custom) {
+          currentCart = await this.commercetoolsClient.setCartCustomType(
+            currentCart.id,
+            currentCart.version,
+            customTypeId,
+          );
+        }
+        const updatedCart = await this.commercetoolsClient.setCartCustomField(
+          currentCart.id,
+          currentCart.version,
+          'ingridSessionId',
+          ingridSessionId,
+        );
+        appLogger.info(`[SUCCESS]: IngridSessionId ${ingridSessionId} is set on cart ${updatedCart.id}.`);
+        return updatedCart;
+      } catch (error) {
+        const statusCode = (error as { statusCode?: number })?.statusCode;
+        if (statusCode !== 409 || attempt === maxAttempts) {
+          appLogger.error(`[ERROR]: Failed to set IngridSessionId ${ingridSessionId} on cart ${currentCart.id}.`);
+          throw new CustomError({
+            message: (error as { message?: string })?.message ?? '',
+            code: (error as { code?: string })?.code ?? '',
+            httpErrorStatus: statusCode ?? 500,
+            cause: error,
+          });
+        }
+        appLogger.error(
+          `[WARN]: Concurrent modification setting IngridSessionId on cart "${currentCart.id}", refetching latest version and retrying (attempt ${attempt}/${maxAttempts}).`,
+        );
+        currentCart = await this.commercetoolsClient.getCartById(currentCart.id);
+      }
     }
-    cart = await this.commercetoolsClient
-      .setCartCustomField(cart.id, cart.version, 'ingridSessionId', ingridSessionId)
-      .catch((error) => {
-        appLogger.error(`[ERROR]: Failed to set IngridSessionId ${ingridSessionId} on cart ${cart.id}.`);
-        throw new CustomError({
-          message: error?.message,
-          code: error.code,
-          httpErrorStatus: error.statusCode,
-          cause: error,
-        });
-      });
-    appLogger.info(`[SUCCESS]: IngridSessionId ${ingridSessionId} is set on cart ${cart.id}.`);
-    return cart;
+    /* istanbul ignore next -- unreachable: the loop above always returns or throws */
+    throw new CustomError({
+      message: `Failed to set IngridSessionId ${ingridSessionId} on cart "${cart.id}" after ${maxAttempts} attempts due to concurrent modification.`,
+      code: 'CART_CONCURRENT_MODIFICATION_RETRY_EXHAUSTED',
+      httpErrorStatus: 409,
+    });
   }
 }

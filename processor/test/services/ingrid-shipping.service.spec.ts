@@ -241,6 +241,53 @@ describe('ingrid-shipping.service', () => {
         expect(customError.httpErrorStatus).toBe(401);
       }
     });
+
+    test('init session retries setting IngridSessionId on a concurrent modification (409)', async () => {
+      mockServer.use(
+        mockRequest(
+          IngridBasePath.STAGING,
+          IngridUrls.DELIVERY_CHECKOUT + '/session.get',
+          200,
+          mockCreateCheckoutSessionSuccessResponse,
+        ),
+      );
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCustomType').mockResolvedValue(sessionType);
+      jest
+        .spyOn(CommercetoolsApiClient.prototype, 'getCartById')
+        .mockResolvedValueOnce(cart)
+        .mockResolvedValueOnce({ ...cart, version: cart.version + 1 });
+
+      const conflictError = Object.assign(new Error('ConcurrentModification'), { statusCode: 409 });
+      jest
+        .spyOn(CommercetoolsApiClient.prototype, 'setCartCustomField')
+        .mockRejectedValueOnce(conflictError)
+        .mockResolvedValueOnce(cart);
+
+      const result = await shippingService.init();
+
+      expect(typeof result.data).toBe('object');
+      expect(CommercetoolsApiClient.prototype.setCartCustomField).toHaveBeenCalledTimes(2);
+      expect(CommercetoolsApiClient.prototype.getCartById).toHaveBeenCalledTimes(2);
+    });
+
+    test('init session fails without retrying when setting IngridSessionId hits a non-conflict error', async () => {
+      mockServer.use(
+        mockRequest(
+          IngridBasePath.STAGING,
+          IngridUrls.DELIVERY_CHECKOUT + '/session.get',
+          200,
+          mockCreateCheckoutSessionSuccessResponse,
+        ),
+      );
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCustomType').mockResolvedValue(sessionType);
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCartById').mockResolvedValue(cart);
+
+      const serverError = Object.assign(new Error('Internal Server Error'), { statusCode: 500 });
+      jest.spyOn(CommercetoolsApiClient.prototype, 'setCartCustomField').mockRejectedValue(serverError);
+
+      await expect(shippingService.init()).rejects.toBeInstanceOf(CustomError);
+      expect(CommercetoolsApiClient.prototype.setCartCustomField).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('update', () => {
