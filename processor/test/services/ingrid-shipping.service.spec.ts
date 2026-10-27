@@ -909,6 +909,63 @@ describe('ingrid-shipping.service', () => {
       expect(updateSessionSpy).not.toHaveBeenCalled();
     });
 
+    test('should not push cart to Ingrid when price matches once shipping cost is deducted (ISK)', async () => {
+      // Mock getting cart with Ingrid session
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCartById').mockResolvedValue({
+        ...cart,
+        custom: {
+          type: { typeId: 'type', id: 'type-id' },
+          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+        },
+      });
+
+      // ISK has fractionDigits 0 in commercetools, but Ingrid always prices in hundredths of the
+      // major unit, so Ingrid's total_value (2600000) must be compared against the ISK cart total
+      // minus shipping (31000 - 5000 = 26000) scaled by 100, not against 26000 directly.
+      jest.spyOn(IngridApiClient.prototype, 'getCheckoutSession').mockResolvedValue({
+        ...mockIngridCheckoutSessionWithAddresses,
+        session: {
+          ...mockIngridCheckoutSessionWithAddresses.session,
+          cart: {
+            ...mockIngridCheckoutSessionWithAddresses.session.cart,
+            total_value: 2600000,
+          },
+        },
+      });
+
+      const updatedCartWithIskShippingCost = {
+        ...cartWithShippingAddress,
+        totalPrice: { type: 'centPrecision' as const, currencyCode: 'ISK', centAmount: 31000, fractionDigits: 0 },
+        shippingInfo: {
+          shippingMethodName: 'Standard Shipping',
+          price: { type: 'centPrecision' as const, currencyCode: 'ISK', centAmount: 5000, fractionDigits: 0 },
+          shippingRate: {
+            price: { type: 'centPrecision' as const, currencyCode: 'ISK', centAmount: 5000, fractionDigits: 0 },
+            tiers: [],
+          },
+        },
+        taxedPrice: {
+          ...cartWithShippingAddress.taxedPrice!,
+          totalGross: { type: 'centPrecision' as const, centAmount: 31000, currencyCode: 'ISK', fractionDigits: 0 },
+        },
+      };
+
+      jest
+        .spyOn(CommercetoolsApiClient.prototype, 'updateCartWithAddressAndShippingMethod')
+        .mockResolvedValue(updatedCartWithIskShippingCost);
+
+      const updateSessionSpy = jest.spyOn(IngridApiClient.prototype, 'updateCheckoutSession');
+
+      const result = await shippingService.update();
+
+      expect(result.data).toEqual({
+        success: true,
+        cartVersion: updatedCartWithIskShippingCost.version,
+        ingridSessionId: 'mock-ingrid-session-id',
+      });
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
     test('should re-write the cart from the refreshed Ingrid session after a price-triggered push', async () => {
       // Mock getting cart with Ingrid session
       jest.spyOn(CommercetoolsApiClient.prototype, 'getCartById').mockResolvedValue({

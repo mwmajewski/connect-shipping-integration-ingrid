@@ -1,4 +1,5 @@
 import { CustomError } from '../../libs/fastify/errors';
+import { convertCentAmountToIngridAmount } from './money';
 import type { Cart, FieldContainer, LineItem } from '@commercetools/platform-sdk';
 import type {
   IngridCart,
@@ -73,7 +74,10 @@ const transformCommercetoolsCartToIngridCart = (ctCart: Cart, voucherCodes?: str
   const totalLineItemsDiscount = calculateTotalLineItemsDiscount(ctCart.lineItems);
 
   // on current items, discountOnTotalPrice is undefined
-  const totalDiscount = (ctCart.discountOnTotalPrice?.discountedAmount.centAmount ?? 0) + totalLineItemsDiscount;
+  const totalDiscount = convertCentAmountToIngridAmount(
+    (ctCart.discountOnTotalPrice?.discountedAmount.centAmount ?? 0) + totalLineItemsDiscount,
+    ctCart.totalPrice.fractionDigits,
+  );
 
   const lineItems = transformCommercetoolsLineItemsToIngridCartItems(ctCart.lineItems, ctCart.locale!);
   const ingridCart: IngridCart = {
@@ -92,7 +96,9 @@ const transformCommercetoolsCartToIngridCart = (ctCart: Cart, voucherCodes?: str
 export const deductShippingCostFromCartTotalPrice = (ctCart: Cart): number => {
   const shippingCost = ctCart.shippingInfo?.price.centAmount ?? 0;
   const totalCartPrice = ctCart.taxedPrice?.totalGross.centAmount ?? ctCart.totalPrice.centAmount; // use "taxedPrice.totalGross" because Ingrid accepts tax inclusive price.
-  return totalCartPrice - shippingCost;
+  // a cart-level voucher can discount the merchandise total close to or below the shipping cost;
+  // Ingrid rejects a negative cart.total_value outright, so floor it at 0 rather than send that.
+  return convertCentAmountToIngridAmount(Math.max(totalCartPrice - shippingCost, 0), ctCart.totalPrice.fractionDigits);
 };
 
 /**
@@ -129,11 +135,15 @@ const transformCommercetoolsLineItemToIngridCartItem = (item: LineItem, locale: 
   ); // item.custom.fields may be undefined
   const ingridCartItem: IngridCartItem = {
     attributes: transformCommercetoolsCustomFieldsToIngridCustomFields(item.custom?.fields ?? {}), // item.custom.fields may be undefined
-    discount: lineItemDiscount,
+    discount: convertCentAmountToIngridAmount(lineItemDiscount, item.price.value.fractionDigits),
     image_url: imageUrl,
     name: item.name[locale]!,
     shipping_date: shippingDate,
-    price: item.taxedPrice?.totalGross.centAmount ?? item.price.value.centAmount, // use "taxedPrice.totalGross" because Ingrid accepts tax inclusive price.
+    // use "taxedPrice.totalGross" because Ingrid accepts tax inclusive price.
+    price: convertCentAmountToIngridAmount(
+      item.taxedPrice?.totalGross.centAmount ?? item.price.value.centAmount,
+      item.taxedPrice?.totalGross.fractionDigits ?? item.price.value.fractionDigits,
+    ),
     quantity: item.quantity,
     sku: item.variant.sku!,
     weight,
