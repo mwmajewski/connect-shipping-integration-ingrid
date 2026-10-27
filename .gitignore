@@ -135,3 +135,6 @@ dist
 
 # Other files
 build/
+
+# JetBrains IDE files
+.idea/

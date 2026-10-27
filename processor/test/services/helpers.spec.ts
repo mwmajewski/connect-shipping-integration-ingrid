@@ -32,7 +32,8 @@ describe('Helper Functions', () => {
               assets: [],
             },
             name: { en: 'Test Product' },
-            price: { value: { centAmount: 1000, currencyCode: 'USD' } },
+            price: { value: { centAmount: 1000, currencyCode: 'USD', fractionDigits: 2 } },
+            totalPrice: { centAmount: 1000, currencyCode: 'USD', fractionDigits: 2 },
             quantity: 1,
             custom: {
               type: {
@@ -47,7 +48,7 @@ describe('Helper Functions', () => {
         ],
         locale: 'en',
         country: 'US',
-        totalPrice: { currencyCode: 'USD', centAmount: 1000 },
+        totalPrice: { currencyCode: 'USD', centAmount: 1000, fractionDigits: 2 },
         id: 'cart-id',
       };
 
@@ -63,17 +64,18 @@ describe('Helper Functions', () => {
             variant: { sku: 'SKU123' },
             name: { en: 'Test Product' },
             price: {
-              value: { centAmount: 1000, currencyCode: 'USD' },
-              discounted: { value: { centAmount: 800, currencyCode: 'USD' } },
+              value: { centAmount: 1000, currencyCode: 'USD', fractionDigits: 2 },
+              discounted: { value: { centAmount: 800, currencyCode: 'USD', fractionDigits: 2 } },
             },
             discountedPricePerQuantity: [
               {
                 quantity: 1,
                 discountedPrice: {
-                  value: { centAmount: 700, currencyCode: 'USD' },
+                  value: { centAmount: 700, currencyCode: 'USD', fractionDigits: 2 },
                 },
               },
             ],
+            totalPrice: { centAmount: 700, currencyCode: 'USD', fractionDigits: 2 },
             quantity: 1,
             custom: {
               type: {
@@ -88,7 +90,7 @@ describe('Helper Functions', () => {
         ],
         locale: 'en',
         country: 'US',
-        totalPrice: { currencyCode: 'USD', centAmount: 700 },
+        totalPrice: { currencyCode: 'USD', centAmount: 700, fractionDigits: 2 },
         id: 'cart-id',
       };
 
@@ -102,8 +104,8 @@ describe('Helper Functions', () => {
     test('should throw error when no delivery groups are provided', () => {
       const emptyDeliveryGroups: IngridDeliveryGroup[] = [];
 
-      expect(() => transformIngridDeliveryGroupsToCommercetoolsDataTypes(emptyDeliveryGroups)).toThrow(CustomError);
-      expect(() => transformIngridDeliveryGroupsToCommercetoolsDataTypes(emptyDeliveryGroups)).toThrow(
+      expect(() => transformIngridDeliveryGroupsToCommercetoolsDataTypes(emptyDeliveryGroups, 2)).toThrow(CustomError);
+      expect(() => transformIngridDeliveryGroupsToCommercetoolsDataTypes(emptyDeliveryGroups, 2)).toThrow(
         'No delivery groups found',
       );
     });
@@ -128,8 +130,10 @@ describe('Helper Functions', () => {
         } as IngridDeliveryGroup,
       ];
 
-      expect(() => transformIngridDeliveryGroupsToCommercetoolsDataTypes(multipleDeliveryGroups)).toThrow(CustomError);
-      expect(() => transformIngridDeliveryGroupsToCommercetoolsDataTypes(multipleDeliveryGroups)).toThrow(
+      expect(() => transformIngridDeliveryGroupsToCommercetoolsDataTypes(multipleDeliveryGroups, 2)).toThrow(
+        CustomError,
+      );
+      expect(() => transformIngridDeliveryGroupsToCommercetoolsDataTypes(multipleDeliveryGroups, 2)).toThrow(
         "We don't support multiple delivery groups yet",
       );
     });
@@ -173,8 +177,32 @@ describe('Helper Functions', () => {
         } as IngridDeliveryGroup,
       ];
 
-      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithNetPrice);
+      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithNetPrice, 2);
       expect(result.customShippingMethod.shippingRate.price.centAmount).toBe(800);
+    });
+
+    test('should convert Ingrid hundredths-of-major-unit price to a cart centAmount for a 0-fraction-digit currency (ISK)', () => {
+      const deliveryGroupWithIskPrice: IngridDeliveryGroup[] = [
+        {
+          addresses: {
+            billing_address: { first_name: 'John' },
+            delivery_address: { first_name: 'John' },
+          },
+          category: { name: 'Standard Shipping' },
+          pricing: {
+            currency: 'ISK',
+            price: 900000, // Ingrid always prices in hundredths of the major unit: 9.000 kr
+            net_price: 900000,
+          },
+          shipping: {
+            carrier_product_id: 'carrier-product-id',
+          },
+        } as IngridDeliveryGroup,
+      ];
+
+      // ISK has fractionDigits 0 in commercetools, so 900000 (Ingrid) must become centAmount 9000.
+      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithIskPrice, 0);
+      expect(result.customShippingMethod.shippingRate.price.centAmount).toBe(9000);
     });
 
     test('should handle delivery group with pickup point ID', () => {
@@ -216,7 +244,7 @@ describe('Helper Functions', () => {
         } as IngridDeliveryGroup,
       ];
 
-      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithPickupPointId);
+      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithPickupPointId, 2);
       expect(result.pickupPointId).toBe('1234567890');
     });
 
@@ -259,7 +287,7 @@ describe('Helper Functions', () => {
         } as unknown as IngridDeliveryGroup,
       ];
 
-      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithInstaboxToken);
+      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithInstaboxToken, 2);
       expect(result.instaboxToken).toBe('1234567890');
     });
 
@@ -300,7 +328,7 @@ describe('Helper Functions', () => {
         } as unknown as IngridDeliveryGroup,
       ];
 
-      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithInstaboxToken);
+      const result = transformIngridDeliveryGroupsToCommercetoolsDataTypes(deliveryGroupWithInstaboxToken, 2);
       expect(result.instaboxToken).toBeUndefined();
     });
   });

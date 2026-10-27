@@ -142,6 +142,134 @@ describe('transformCommercetoolsToIngridDTOs', () => {
     expect(payload.cart.total_discount).toEqual(1099); // 500 (cart discount) + 599 (line item discount)
   });
 
+  test('should use the line item totalPrice fractionDigits, not a high-precision price value fractionDigits', async () => {
+    // item.price.value can be a HighPrecisionMoney, whose fractionDigits describes preciseAmount
+    // (e.g. 4 decimals for a per-unit price), not centAmount, which is still in the currency's
+    // standard minor units. item.totalPrice is always CentPrecisionMoney and must be used instead.
+    const lineItem = cart.lineItems[0];
+    if (!lineItem) {
+      throw new Error('Test setup error: cart.lineItems[0] is undefined');
+    }
+
+    const cartWithHighPrecisionPrice: Cart = {
+      ...cart,
+      lineItems: [
+        {
+          ...lineItem,
+          price: {
+            ...lineItem.price,
+            value: {
+              type: 'highPrecision',
+              currencyCode: 'EUR',
+              centAmount: 1000, // €10.00, in standard EUR cents
+              fractionDigits: 4,
+              preciseAmount: 100000,
+            },
+          },
+          totalPrice: {
+            type: 'centPrecision',
+            currencyCode: 'EUR',
+            centAmount: 1000,
+            fractionDigits: 2,
+          },
+        },
+      ],
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithHighPrecisionPrice);
+
+    // with the bug, this would be 10 (1000 * 10 ** (2 - 4)) instead of 1000.
+    expect(payload.cart.items[0]?.price).toEqual(1000);
+    expect(payload.cart.items[0]?.discount).toEqual(0);
+  });
+
+  test('should clamp a negative cart total (after shipping deduction) to zero', async () => {
+    // A cart-level voucher can discount the merchandise total close to or below the shipping
+    // cost, which would otherwise make total_value negative; Ingrid rejects that outright with
+    // "invalid request: cart.total_value must be non negative value" (PITP-8215).
+    const cartWithShippingCostExceedingTotal: Cart = {
+      ...cart,
+      shippingInfo: {
+        shippingMethodName: 'Standard Shipping',
+        price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 5000, fractionDigits: 2 },
+        shippingRate: {
+          price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 5000, fractionDigits: 2 },
+          tiers: [],
+        },
+        shippingMethodState: 'MatchesCart',
+      },
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithShippingCostExceedingTotal);
+
+    // cart total (2599) - shipping cost (5000) would be -2401; it must be floored at 0 instead.
+    expect(payload.cart.total_value).toEqual(0);
+  });
+
+  test('should convert ISK amounts (fractionDigits 0) to Ingrid hundredths-of-major-unit format', async () => {
+    const lineItem = cart.lineItems[0];
+    if (!lineItem) {
+      throw new Error('Test setup error: cart.lineItems[0] is undefined');
+    }
+
+    const cartIsk: Cart = {
+      ...cart,
+      totalPrice: {
+        type: 'centPrecision',
+        currencyCode: 'ISK',
+        centAmount: 9000, // 9.000 kr
+        fractionDigits: 0,
+      },
+      discountOnTotalPrice: {
+        discountedAmount: {
+          type: 'centPrecision',
+          currencyCode: 'ISK',
+          centAmount: 1000, // 1.000 kr cart-level discount
+          fractionDigits: 0,
+        },
+        includedDiscounts: [],
+      },
+      lineItems: [
+        {
+          ...lineItem,
+          price: {
+            ...lineItem.price,
+            value: {
+              type: 'centPrecision',
+              currencyCode: 'ISK',
+              centAmount: 9000,
+              fractionDigits: 0,
+            },
+            discounted: {
+              value: {
+                type: 'centPrecision',
+                currencyCode: 'ISK',
+                centAmount: 8000, // 1.000 kr line item discount
+                fractionDigits: 0,
+              },
+              discount: { id: 'test-discount-id', typeId: 'product-discount' },
+            },
+          },
+          totalPrice: {
+            type: 'centPrecision',
+            currencyCode: 'ISK',
+            centAmount: 9000,
+            fractionDigits: 0,
+          },
+        },
+      ],
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartIsk);
+
+    // Ingrid always prices in hundredths of the major unit: 9.000 kr must be sent as 900000, not 9000.
+    expect(payload.cart.total_value).toEqual(900000);
+    // (1.000 kr cart discount + 1.000 kr line item discount) * 100
+    expect(payload.cart.total_discount).toEqual(200000);
+    expect(payload.cart.items[0]?.price).toEqual(900000);
+    expect(payload.cart.items[0]?.discount).toEqual(100000);
+  });
+
   test('transformCommercetoolsLineItemToIngridCartItemWithProductDimension', async () => {
     const lineItem = cart.lineItems[0];
     if (!lineItem) {

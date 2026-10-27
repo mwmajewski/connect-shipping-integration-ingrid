@@ -152,8 +152,10 @@ export class IngridShippingService extends AbstractShippingService {
     }
 
     // check if price on Ingrid (shipping-excluded) is the same as commercetools cart total minus shipping cost
-    // Ingrid uses the same format for prices as commercetools
-    // example: 10000 = 100.00 [Currency Code]
+    // Ingrid always prices in hundredths of the major unit regardless of the currency's real
+    // fractionDigits (e.g. ISK has fractionDigits 0, so 9.000 kr is sent/received as 900000).
+    // deductShippingCostFromCartTotalPrice() already converts to that same convention, so this
+    // comparison is unit-consistent for every currency, not just 2-decimal ones.
     const { total_value: ingridTotalValue } = ingridCheckoutSession.session.cart;
     const commercetoolsTotalTaxedValue = deductShippingCostFromCartTotalPrice(updatedCart);
 
@@ -233,7 +235,10 @@ export class IngridShippingService extends AbstractShippingService {
       pickupPointId,
       deliveryAddons,
       instaboxToken,
-    } = transformIngridDeliveryGroupsToCommercetoolsDataTypes(ingridCheckoutSession.session.delivery_groups);
+    } = transformIngridDeliveryGroupsToCommercetoolsDataTypes(
+      ingridCheckoutSession.session.delivery_groups,
+      cart.totalPrice.fractionDigits,
+    );
 
     const customFieldsPayload: { name: string; value: string | undefined }[] = [
       {

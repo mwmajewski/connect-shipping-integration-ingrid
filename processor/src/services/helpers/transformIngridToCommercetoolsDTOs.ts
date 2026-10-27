@@ -1,4 +1,5 @@
 import { CustomError } from '../../libs/fastify/errors';
+import { convertIngridAmountToCentAmount } from './money';
 import type { BaseAddress, ShippingRateDraft } from '@commercetools/platform-sdk';
 import type {
   IngridBillingAddress,
@@ -15,6 +16,8 @@ type CustomShippingMethod = {
  * Transform Ingrid delivery groups to Commercetools data types
  *
  * @param {IngridDeliveryGroup[]} ingridDeliveryGroups - Array of Ingrid delivery groups
+ * @param {number} cartCurrencyFractionDigits - fractionDigits of the commercetools cart's currency,
+ * used to convert Ingrid's hundredths-of-major-unit amounts back to commercetools centAmounts
  *
  * @returns {Object} Object containing billing address, delivery address and custom shipping method
  * @returns {BaseAddress} returns.billingAddress - Commercetools billing address
@@ -26,6 +29,7 @@ type CustomShippingMethod = {
  */
 export const transformIngridDeliveryGroupsToCommercetoolsDataTypes = (
   ingridDeliveryGroups: IngridDeliveryGroup[],
+  cartCurrencyFractionDigits: number,
 ): {
   billingAddress: BaseAddress;
   deliveryAddress: BaseAddress;
@@ -53,7 +57,10 @@ export const transformIngridDeliveryGroupsToCommercetoolsDataTypes = (
   const ingridDeliveryGroup = ingridDeliveryGroups[0]!;
   const billingAddress = transformIngridAddressToCommercetoolsAddress(ingridDeliveryGroup.addresses.billing_address);
   const deliveryAddress = transformIngridAddressToCommercetoolsAddress(ingridDeliveryGroup.addresses.delivery_address);
-  const customShippingMethod = transformIngridDeliveryGroupToCustomShippingMethod(ingridDeliveryGroup);
+  const customShippingMethod = transformIngridDeliveryGroupToCustomShippingMethod(
+    ingridDeliveryGroup,
+    cartCurrencyFractionDigits,
+  );
   const extMethodId = ingridDeliveryGroup.shipping.carrier_product_id;
   const pickupPointId = transformDependantFields(ingridDeliveryGroup);
   const deliveryAddons: string | undefined = transformDeliveryAddons(ingridDeliveryGroup);
@@ -98,18 +105,23 @@ const transformIngridAddressToCommercetoolsAddress = (
  * Transform ingrid delivery group to custom shipping method
  *
  * @param ingridDeliveryGroup - Ingrid delivery group
+ * @param cartCurrencyFractionDigits - fractionDigits of the commercetools cart's currency
  *
  * @returns {CustomShippingMethod}
  */
 const transformIngridDeliveryGroupToCustomShippingMethod = (
   ingridDeliveryGroup: IngridDeliveryGroup,
+  cartCurrencyFractionDigits: number,
 ): CustomShippingMethod => {
   const customShippingMethod = {
     shippingMethodName: ingridDeliveryGroup.category.name,
     shippingRate: {
       price: {
         currencyCode: ingridDeliveryGroup.pricing.currency,
-        centAmount: ingridDeliveryGroup.pricing.net_price ?? ingridDeliveryGroup.pricing.price,
+        centAmount: convertIngridAmountToCentAmount(
+          ingridDeliveryGroup.pricing.net_price ?? ingridDeliveryGroup.pricing.price,
+          cartCurrencyFractionDigits,
+        ),
       },
     },
   };
