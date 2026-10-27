@@ -6,10 +6,12 @@
  * @param {number} centAmount - commercetools centAmount (10^-fractionDigits of the major unit)
  * @param {number} fractionDigits - the currency's fractionDigits, as found on the CentPrecisionMoney object
  *
- * @returns {number} the amount in Ingrid's fixed-hundredths convention
+ * @returns {number} the amount in Ingrid's fixed-hundredths convention, rounded to an integer
+ * (for a currency with more than 2 fraction digits, e.g. KWD/BHD/OMR with 3, this convention
+ * can't represent its smallest unit exactly, and Ingrid requires an integer amount)
  */
 export const convertCentAmountToIngridAmount = (centAmount: number, fractionDigits: number): number =>
-  centAmount * 10 ** (2 - fractionDigits);
+  Math.round(centAmount * 10 ** (2 - fractionDigits));
 
 /**
  * Convert an Ingrid hundredths-of-major-unit amount back to a commercetools centAmount,

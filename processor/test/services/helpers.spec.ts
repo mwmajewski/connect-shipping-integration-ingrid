@@ -33,6 +33,7 @@ describe('Helper Functions', () => {
             },
             name: { en: 'Test Product' },
             price: { value: { centAmount: 1000, currencyCode: 'USD', fractionDigits: 2 } },
+            totalPrice: { centAmount: 1000, currencyCode: 'USD', fractionDigits: 2 },
             quantity: 1,
             custom: {
               type: {
@@ -74,6 +75,7 @@ describe('Helper Functions', () => {
                 },
               },
             ],
+            totalPrice: { centAmount: 700, currencyCode: 'USD', fractionDigits: 2 },
             quantity: 1,
             custom: {
               type: {

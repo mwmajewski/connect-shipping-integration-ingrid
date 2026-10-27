@@ -142,6 +142,47 @@ describe('transformCommercetoolsToIngridDTOs', () => {
     expect(payload.cart.total_discount).toEqual(1099); // 500 (cart discount) + 599 (line item discount)
   });
 
+  test('should use the line item totalPrice fractionDigits, not a high-precision price value fractionDigits', async () => {
+    // item.price.value can be a HighPrecisionMoney, whose fractionDigits describes preciseAmount
+    // (e.g. 4 decimals for a per-unit price), not centAmount, which is still in the currency's
+    // standard minor units. item.totalPrice is always CentPrecisionMoney and must be used instead.
+    const lineItem = cart.lineItems[0];
+    if (!lineItem) {
+      throw new Error('Test setup error: cart.lineItems[0] is undefined');
+    }
+
+    const cartWithHighPrecisionPrice: Cart = {
+      ...cart,
+      lineItems: [
+        {
+          ...lineItem,
+          price: {
+            ...lineItem.price,
+            value: {
+              type: 'highPrecision',
+              currencyCode: 'EUR',
+              centAmount: 1000, // €10.00, in standard EUR cents
+              fractionDigits: 4,
+              preciseAmount: 100000,
+            },
+          },
+          totalPrice: {
+            type: 'centPrecision',
+            currencyCode: 'EUR',
+            centAmount: 1000,
+            fractionDigits: 2,
+          },
+        },
+      ],
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithHighPrecisionPrice);
+
+    // with the bug, this would be 10 (1000 * 10 ** (2 - 4)) instead of 1000.
+    expect(payload.cart.items[0]?.price).toEqual(1000);
+    expect(payload.cart.items[0]?.discount).toEqual(0);
+  });
+
   test('should clamp a negative cart total (after shipping deduction) to zero', async () => {
     // A cart-level voucher can discount the merchandise total close to or below the shipping
     // cost, which would otherwise make total_value negative; Ingrid rejects that outright with
@@ -208,6 +249,12 @@ describe('transformCommercetoolsToIngridDTOs', () => {
               },
               discount: { id: 'test-discount-id', typeId: 'product-discount' },
             },
+          },
+          totalPrice: {
+            type: 'centPrecision',
+            currencyCode: 'ISK',
+            centAmount: 9000,
+            fractionDigits: 0,
           },
         },
       ],

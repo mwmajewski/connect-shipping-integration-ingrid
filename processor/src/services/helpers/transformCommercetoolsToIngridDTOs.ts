@@ -135,14 +135,17 @@ const transformCommercetoolsLineItemToIngridCartItem = (item: LineItem, locale: 
   ); // item.custom.fields may be undefined
   const ingridCartItem: IngridCartItem = {
     attributes: transformCommercetoolsCustomFieldsToIngridCustomFields(item.custom?.fields ?? {}), // item.custom.fields may be undefined
-    discount: convertCentAmountToIngridAmount(lineItemDiscount, item.price.value.fractionDigits),
+    // item.price.value can be a HighPrecisionMoney, whose fractionDigits describes
+    // preciseAmount, not centAmount; item.totalPrice is always CentPrecisionMoney, so its
+    // fractionDigits reliably matches the currency's standard precision used by centAmount.
+    discount: convertCentAmountToIngridAmount(lineItemDiscount, item.totalPrice.fractionDigits),
     image_url: imageUrl,
     name: item.name[locale]!,
     shipping_date: shippingDate,
     // use "taxedPrice.totalGross" because Ingrid accepts tax inclusive price.
     price: convertCentAmountToIngridAmount(
       item.taxedPrice?.totalGross.centAmount ?? item.price.value.centAmount,
-      item.taxedPrice?.totalGross.fractionDigits ?? item.price.value.fractionDigits,
+      item.totalPrice.fractionDigits,
     ),
     quantity: item.quantity,
     sku: item.variant.sku!,
