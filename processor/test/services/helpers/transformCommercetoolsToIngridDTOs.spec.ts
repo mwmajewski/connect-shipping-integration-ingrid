@@ -206,6 +206,134 @@ describe('transformCommercetoolsToIngridDTOs', () => {
     expect(payload.cart.total_value).toEqual(0);
   });
 
+  test('should leave cart total unchanged when there is no shippingInfo', async () => {
+    const cartWithoutShippingInfo: Cart = {
+      ...cart,
+      shippingInfo: undefined,
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithoutShippingInfo);
+
+    expect(payload.cart.total_value).toEqual(2599);
+  });
+
+  test('should deduct the shipping price when shipping is not discounted', async () => {
+    const cartWithUndiscountedShipping: Cart = {
+      ...cart,
+      totalPrice: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 3099, fractionDigits: 2 },
+      shippingInfo: {
+        shippingMethodName: 'Standard Shipping',
+        price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 500, fractionDigits: 2 },
+        shippingRate: {
+          price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 500, fractionDigits: 2 },
+          tiers: [],
+        },
+        shippingMethodState: 'MatchesCart',
+      },
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithUndiscountedShipping);
+
+    expect(payload.cart.total_value).toEqual(2599); // 3099 - 500
+  });
+
+  test('should deduct the discounted shipping cost, not the undiscounted price, when shipping is discounted (PITP-8215)', async () => {
+    // Production case: a 100% shipping discount makes shippingInfo.price (1699, undiscounted)
+    // deducted from a total that already contains the discounted shipping (0), giving -1149
+    // instead of the correct 550. shippingInfo.discountedPrice.value reflects the real deduction.
+    const cartWithFreeShipping: Cart = {
+      ...cart,
+      taxedPrice: {
+        totalNet: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 550, fractionDigits: 2 },
+        totalGross: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 550, fractionDigits: 2 },
+        taxPortions: [],
+      },
+      shippingInfo: {
+        shippingMethodName: 'Standard Shipping',
+        price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1699, fractionDigits: 2 },
+        discountedPrice: {
+          value: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 0, fractionDigits: 2 },
+          includedDiscounts: [],
+        },
+        shippingRate: {
+          price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1699, fractionDigits: 2 },
+          tiers: [],
+        },
+        shippingMethodState: 'MatchesCart',
+      },
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithFreeShipping);
+
+    expect(payload.cart.total_value).toEqual(550); // 550 - 0, not 550 - 1699
+  });
+
+  test('should prefer the taxed shipping price over discountedPrice when both are present and the cart total is tax inclusive', async () => {
+    const cartWithTaxedShipping: Cart = {
+      ...cart,
+      totalPrice: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+      taxedPrice: {
+        totalNet: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1100, fractionDigits: 2 },
+        totalGross: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1200, fractionDigits: 2 },
+        taxPortions: [],
+      },
+      shippingInfo: {
+        shippingMethodName: 'Standard Shipping',
+        price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+        discountedPrice: {
+          value: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 500, fractionDigits: 2 },
+          includedDiscounts: [],
+        },
+        taxedPrice: {
+          totalNet: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 550, fractionDigits: 2 },
+          totalGross: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 600, fractionDigits: 2 },
+          taxPortions: [],
+        },
+        shippingRate: {
+          price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+          tiers: [],
+        },
+        shippingMethodState: 'MatchesCart',
+      },
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithTaxedShipping);
+
+    expect(payload.cart.total_value).toEqual(600); // 1200 (taxedPrice.totalGross) - 600 (shipping taxedPrice.totalGross), not - 500
+  });
+
+  test('should not deduct the gross shipping price when the cart total is not tax inclusive', async () => {
+    // Guards against mixing a gross (tax-inclusive) shippingInfo.taxedPrice with a cart total
+    // that excludes that shipping tax (ctCart.taxedPrice unset), which would understate total_value.
+    const cartWithoutTaxedPrice: Cart = {
+      ...cart,
+      totalPrice: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+      taxedPrice: undefined,
+      shippingInfo: {
+        shippingMethodName: 'Standard Shipping',
+        price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+        discountedPrice: {
+          value: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 500, fractionDigits: 2 },
+          includedDiscounts: [],
+        },
+        taxedPrice: {
+          totalNet: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 550, fractionDigits: 2 },
+          totalGross: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 600, fractionDigits: 2 },
+          taxPortions: [],
+        },
+        shippingRate: {
+          price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+          tiers: [],
+        },
+        shippingMethodState: 'MatchesCart',
+      },
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithoutTaxedPrice);
+
+    expect(payload.cart.total_value).toEqual(500); // 1000 - 500 (discountedPrice.value), not 1000 - 600 (gross taxedPrice.totalGross)
+  });
+
   test('should convert ISK amounts (fractionDigits 0) to Ingrid hundredths-of-major-unit format', async () => {
     const lineItem = cart.lineItems[0];
     if (!lineItem) {
