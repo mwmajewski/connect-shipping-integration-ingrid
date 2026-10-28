@@ -94,7 +94,14 @@ const transformCommercetoolsCartToIngridCart = (ctCart: Cart, voucherCodes?: str
 };
 
 export const deductShippingCostFromCartTotalPrice = (ctCart: Cart): number => {
-  const shippingCost = ctCart.shippingInfo?.price.centAmount ?? 0;
+  const shippingInfo = ctCart.shippingInfo;
+  // deduct the shipping cost the cart total actually contains: a shipping cart discount lowers
+  // "taxedPrice" and "discountedPrice", while "price" stays at the undiscounted amount
+  const shippingCost =
+    shippingInfo?.taxedPrice?.totalGross.centAmount ??
+    shippingInfo?.discountedPrice?.value.centAmount ??
+    shippingInfo?.price.centAmount ??
+    0;
   const totalCartPrice = ctCart.taxedPrice?.totalGross.centAmount ?? ctCart.totalPrice.centAmount; // use "taxedPrice.totalGross" because Ingrid accepts tax inclusive price.
   // a cart-level voucher can discount the merchandise total close to or below the shipping cost;
   // Ingrid rejects a negative cart.total_value outright, so floor it at 0 rather than send that.
