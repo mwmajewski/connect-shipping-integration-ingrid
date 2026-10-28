@@ -268,10 +268,15 @@ describe('transformCommercetoolsToIngridDTOs', () => {
     expect(payload.cart.total_value).toEqual(550); // 550 - 0, not 550 - 1699
   });
 
-  test('should prefer the taxed shipping price over discountedPrice when both are present', async () => {
+  test('should prefer the taxed shipping price over discountedPrice when both are present and the cart total is tax inclusive', async () => {
     const cartWithTaxedShipping: Cart = {
       ...cart,
       totalPrice: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+      taxedPrice: {
+        totalNet: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1100, fractionDigits: 2 },
+        totalGross: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1200, fractionDigits: 2 },
+        taxPortions: [],
+      },
       shippingInfo: {
         shippingMethodName: 'Standard Shipping',
         price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
@@ -294,7 +299,39 @@ describe('transformCommercetoolsToIngridDTOs', () => {
 
     const payload = transformCommercetoolsCartToIngridPayload(cartWithTaxedShipping);
 
-    expect(payload.cart.total_value).toEqual(400); // 1000 - 600 (taxedPrice.totalGross), not 1000 - 500
+    expect(payload.cart.total_value).toEqual(600); // 1200 (taxedPrice.totalGross) - 600 (shipping taxedPrice.totalGross), not - 500
+  });
+
+  test('should not deduct the gross shipping price when the cart total is not tax inclusive', async () => {
+    // Guards against mixing a gross (tax-inclusive) shippingInfo.taxedPrice with a cart total
+    // that excludes that shipping tax (ctCart.taxedPrice unset), which would understate total_value.
+    const cartWithoutTaxedPrice: Cart = {
+      ...cart,
+      totalPrice: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+      taxedPrice: undefined,
+      shippingInfo: {
+        shippingMethodName: 'Standard Shipping',
+        price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+        discountedPrice: {
+          value: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 500, fractionDigits: 2 },
+          includedDiscounts: [],
+        },
+        taxedPrice: {
+          totalNet: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 550, fractionDigits: 2 },
+          totalGross: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 600, fractionDigits: 2 },
+          taxPortions: [],
+        },
+        shippingRate: {
+          price: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 1000, fractionDigits: 2 },
+          tiers: [],
+        },
+        shippingMethodState: 'MatchesCart',
+      },
+    };
+
+    const payload = transformCommercetoolsCartToIngridPayload(cartWithoutTaxedPrice);
+
+    expect(payload.cart.total_value).toEqual(500); // 1000 - 500 (discountedPrice.value), not 1000 - 600 (gross taxedPrice.totalGross)
   });
 
   test('should convert ISK amounts (fractionDigits 0) to Ingrid hundredths-of-major-unit format', async () => {
