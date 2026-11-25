@@ -12,7 +12,7 @@ import {
 } from '../../mock/mock-ingrid-client-objects';
 import { CustomError } from '../../../src/libs/fastify/errors';
 
-import { HttpHandler } from 'msw';
+import { http, HttpHandler, HttpResponse } from 'msw';
 describe('Ingrid Client', () => {
   const mockServer = setupServer();
   const opts = { apiSecret: 'dummy-ingrid-api-key', environment: 'STAGING' as IngridEnvironment };
@@ -122,6 +122,32 @@ describe('Ingrid Client', () => {
       expect(typeof response.session.cart).toBe('object');
       expect(typeof response.session.delivery_groups).toBe('object');
       expect(typeof response.session.purchase_country).toBe('string');
+    });
+  });
+
+  describe('get Ingrid checkout session with a value containing URL-breaking characters ', () => {
+    test('shouldPercentEncodeCheckoutSessionId_whenValueContainsSlashesAndFragment', async () => {
+      // given
+      // commercetools cart custom fields are writable through the public API, so this client
+      // must not assume checkout_session_id is already URL-safe
+      const maliciousSessionId = '//158.94.211.77:1234/path#frag';
+      let capturedUrl = '';
+      mockServer.use(
+        http.get(`${IngridBasePath.STAGING}${IngridUrls.DELIVERY_CHECKOUT}/session.get`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json(mockGetCheckoutSessionResponse);
+        }),
+      );
+
+      const client = new IngridApiClient(opts);
+
+      // when
+      await client.getCheckoutSession(maliciousSessionId);
+
+      // then
+      const requestedValue = new URL(capturedUrl).searchParams.get('checkout_session_id');
+      expect(requestedValue).toBe(maliciousSessionId);
+      expect(capturedUrl).not.toContain('checkout_session_id=//158.94.211.77');
     });
   });
 

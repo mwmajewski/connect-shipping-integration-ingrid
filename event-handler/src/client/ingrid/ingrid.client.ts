@@ -72,18 +72,15 @@ export default class IngridApiClient {
   public async getCheckoutSession(
     checkoutSessionId: string
   ): Promise<IngridGetSessionResponse> {
+    const query = new URLSearchParams({
+      checkout_session_id: checkoutSessionId,
+    });
+    const url = `${IngridUrls.DELIVERY_CHECKOUT}/session.get?${query}`;
     try {
-      const response = await this.client.get(
-        IngridUrls.DELIVERY_CHECKOUT +
-          `/session.get?checkout_session_id=${checkoutSessionId}`
-      );
+      const response = await this.client.get(url);
       return response.data as IngridGetSessionResponse;
     } catch (error: unknown) {
-      logIngridErrorResponse(
-        error,
-        IngridUrls.DELIVERY_CHECKOUT +
-          `/session.get?checkout_session_id=${checkoutSessionId}`
-      );
+      logIngridErrorResponse(error, url);
 
       const isRetryable =
         axios.isAxiosError(error) &&

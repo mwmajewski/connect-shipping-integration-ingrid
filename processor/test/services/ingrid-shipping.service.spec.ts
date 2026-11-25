@@ -288,6 +288,39 @@ describe('ingrid-shipping.service', () => {
       await expect(shippingService.init()).rejects.toBeInstanceOf(CustomError);
       expect(CommercetoolsApiClient.prototype.setCartCustomField).toHaveBeenCalledTimes(1);
     });
+
+    test('shouldInitiateNewSession_whenCartHasMalformedIngridSessionId', async () => {
+      // given
+      // a cart's ingridSessionId custom field is writable through the commercetools public API
+      // and must not be trusted as if it came from Ingrid
+      mockServer.use(
+        mockRequest(
+          IngridBasePath.STAGING,
+          IngridUrls.DELIVERY_CHECKOUT + '/session.create',
+          200,
+          mockCreateCheckoutSessionSuccessResponse,
+        ),
+      );
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCustomType').mockResolvedValue(sessionType);
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCartById').mockResolvedValue({
+        ...cart,
+        custom: {
+          type: { typeId: 'type', id: 'ingrid-session-type-id' },
+          fields: { ingridSessionId: '//158.94.211.77:1234/path' },
+        },
+      });
+      jest.spyOn(CommercetoolsApiClient.prototype, 'setCartCustomField').mockResolvedValue(cart);
+      const createSessionSpy = jest.spyOn(IngridApiClient.prototype, 'createCheckoutSession');
+      const getSessionSpy = jest.spyOn(IngridApiClient.prototype, 'getCheckoutSession');
+
+      // when
+      const result = await shippingService.init();
+
+      // then
+      expect(result.data.success).toBe(true);
+      expect(createSessionSpy).toHaveBeenCalledTimes(1);
+      expect(getSessionSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('update', () => {
@@ -302,7 +335,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -334,7 +367,7 @@ describe('ingrid-shipping.service', () => {
       // Mock the updateCheckoutSession method
       jest.spyOn(IngridApiClient.prototype, 'updateCheckoutSession').mockResolvedValue({
         session: {
-          checkout_session_id: 'mock-ingrid-session-id',
+          checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
           status: 'active',
           updated_at: '2021-01-01T00:00:00.000Z',
           cart: mockIngridCheckoutSessionWithAddresses.session.cart,
@@ -350,7 +383,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: cart.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
 
       expect(CommercetoolsApiClient.prototype.updateCartWithAddressAndShippingMethod).toHaveBeenCalledWith(
@@ -395,7 +428,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -431,7 +464,7 @@ describe('ingrid-shipping.service', () => {
       // Mock the updateCheckoutSession method
       jest.spyOn(IngridApiClient.prototype, 'updateCheckoutSession').mockResolvedValue({
         session: {
-          checkout_session_id: 'mock-ingrid-session-id',
+          checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
           status: 'active',
           updated_at: '2021-01-01T00:00:00.000Z',
           cart: mockIngridCheckoutSessionWithAddresses.session.cart,
@@ -447,7 +480,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: cart.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
 
       expect(CommercetoolsApiClient.prototype.updateCartWithAddressAndShippingMethod).toHaveBeenCalledWith(
@@ -492,7 +525,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -528,7 +561,7 @@ describe('ingrid-shipping.service', () => {
       // Mock the updateCheckoutSession method
       jest.spyOn(IngridApiClient.prototype, 'updateCheckoutSession').mockResolvedValue({
         session: {
-          checkout_session_id: 'mock-ingrid-session-id',
+          checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
           status: 'active',
           updated_at: '2021-01-01T00:00:00.000Z',
           cart: mockIngridCheckoutSessionWithDeliveryAddons.session.cart,
@@ -543,7 +576,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: cart.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
 
       expect(CommercetoolsApiClient.prototype.updateCartWithAddressAndShippingMethod).toHaveBeenCalledWith(
@@ -587,7 +620,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -644,7 +677,7 @@ describe('ingrid-shipping.service', () => {
       // Mock the updateCheckoutSession method
       const updateSessionSpy = jest.spyOn(IngridApiClient.prototype, 'updateCheckoutSession').mockResolvedValue({
         session: {
-          checkout_session_id: 'mock-ingrid-session-id',
+          checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
           status: 'active',
           updated_at: '2021-01-01T00:00:00.000Z',
           cart: mockIngridCheckoutSessionWithAddresses.session.cart,
@@ -660,7 +693,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: updatedCartWithTaxedPrice.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
 
       // Verify that updateCheckoutSession was called
@@ -678,7 +711,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -714,7 +747,7 @@ describe('ingrid-shipping.service', () => {
       // Mock the updateCheckoutSession method
       jest.spyOn(IngridApiClient.prototype, 'updateCheckoutSession').mockResolvedValue({
         session: {
-          checkout_session_id: 'mock-ingrid-session-id',
+          checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
           status: 'active',
           updated_at: '2021-01-01T00:00:00.000Z',
           cart: mockIngridCheckoutSessionWithInstaboxToken.session.cart,
@@ -730,7 +763,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: cart.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
 
       expect(CommercetoolsApiClient.prototype.updateCartWithAddressAndShippingMethod).toHaveBeenCalledWith(
@@ -774,7 +807,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -807,7 +840,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -833,13 +866,35 @@ describe('ingrid-shipping.service', () => {
       await expect(shippingService.update()).rejects.toThrow(CustomError);
     });
 
+    test('shouldThrowError_whenCartHasMalformedIngridSessionId', async () => {
+      // given
+      // a cart's ingridSessionId custom field is writable through the commercetools public API
+      // and must not be forwarded to the Ingrid API as if it were a real session ID
+      jest.spyOn(CommercetoolsApiClient.prototype, 'getCartById').mockResolvedValue({
+        ...cart,
+        custom: {
+          type: { typeId: 'type', id: 'ingrid-session-type-id' },
+          fields: { ingridSessionId: 'x#isidb562ca9c-frag' },
+        },
+      });
+      const getSessionSpy = jest.spyOn(IngridApiClient.prototype, 'getCheckoutSession');
+
+      // when
+      const resultPromise = shippingService.update();
+
+      // then
+      await expect(resultPromise).rejects.toThrow(CustomError);
+      await expect(resultPromise).rejects.toMatchObject({ code: 'NO_INGRID_SESSION_ID_FOUND' });
+      expect(getSessionSpy).not.toHaveBeenCalled();
+    });
+
     test('should throw error when updating cart fails', async () => {
       // Mock getting cart with Ingrid session
       jest.spyOn(CommercetoolsApiClient.prototype, 'getCartById').mockResolvedValue({
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -866,7 +921,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -904,7 +959,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: updatedCartWithShippingCost.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
       expect(updateSessionSpy).not.toHaveBeenCalled();
     });
@@ -915,7 +970,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -961,7 +1016,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: updatedCartWithIskShippingCost.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
       expect(updateSessionSpy).not.toHaveBeenCalled();
     });
@@ -972,7 +1027,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -1007,7 +1062,7 @@ describe('ingrid-shipping.service', () => {
       jest.spyOn(IngridApiClient.prototype, 'updateCheckoutSession').mockResolvedValue({
         session: {
           ...mockIngridCheckoutSessionWithAddresses.session,
-          checkout_session_id: 'mock-ingrid-session-id',
+          checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
           delivery_groups: [reselectedDeliveryGroup],
         },
         html_snippet: '<div>Updated Ingrid Checkout</div>',
@@ -1020,7 +1075,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: secondWriteResult.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
 
       expect(CommercetoolsApiClient.prototype.updateCartWithAddressAndShippingMethod).toHaveBeenCalledTimes(2);
@@ -1039,7 +1094,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       };
       const refetchedCart = { ...cartWithSession, version: cartWithSession.version + 1 };
@@ -1064,7 +1119,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: cartWithShippingAddress.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
 
       expect(CommercetoolsApiClient.prototype.updateCartWithAddressAndShippingMethod).toHaveBeenCalledTimes(2);
@@ -1091,7 +1146,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -1120,7 +1175,7 @@ describe('ingrid-shipping.service', () => {
       const updatedSession = {
         session: {
           ...mockIngridCheckoutSessionWithAddresses.session,
-          checkout_session_id: 'mock-ingrid-session-id',
+          checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
         },
         html_snippet: '<div>Updated Ingrid Checkout</div>',
       };
@@ -1134,7 +1189,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: cartWithShippingAddress.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
       expect(updateSessionSpy).toHaveBeenCalledTimes(2);
       // the retry re-pulled the session before resubmitting
@@ -1146,7 +1201,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
@@ -1197,7 +1252,7 @@ describe('ingrid-shipping.service', () => {
       expect(result.data).toEqual({
         success: true,
         cartVersion: cartWithShippingAddress.version,
-        ingridSessionId: 'mock-ingrid-session-id',
+        ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       });
       // it only attempted the push once - the second attempt was skipped since the
       // re-pulled session already matched the cart total
@@ -1210,7 +1265,7 @@ describe('ingrid-shipping.service', () => {
         ...cart,
         custom: {
           type: { typeId: 'type', id: 'type-id' },
-          fields: { ingridSessionId: 'mock-ingrid-session-id' },
+          fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
         },
       });
 
