@@ -304,13 +304,13 @@ describe('Event Controller', () => {
       orders: mockCommercetoolsGetOrders,
     });
 
-    const orderWithTransportOrderIdSet = {
+    const orderWithShippingAddressSet = {
       ...orderWithReadyShipmentState,
       version: orderWithReadyShipmentState.version + 1,
     };
-    const orderWithShippingAddressSet = {
+    const orderWithTransportOrderIdSet = {
       ...orderWithReadyShipmentState,
-      version: orderWithTransportOrderIdSet.version + 1,
+      version: orderWithShippingAddressSet.version + 1,
     };
 
     jest
@@ -378,7 +378,7 @@ describe('Event Controller', () => {
     expect(mockResponse.status).toHaveBeenCalledWith(204);
     expect(updateClient.setShippingAddress).toHaveBeenCalledWith(
       mockOrderId,
-      orderWithTransportOrderIdSet.version,
+      undefined,
       {
         firstName: 'Daniel',
         lastName: 'Test',
@@ -393,12 +393,144 @@ describe('Event Controller', () => {
         email: 'test@example.com',
       }
     );
-    expect(updateClient.changeShipmentState).toHaveBeenCalledWith(
+    expect(updateClient.setTransportOrderId).toHaveBeenCalledWith(
+      undefined,
       mockOrderId,
       orderWithShippingAddressSet.version,
+      'dummy-tos-id'
+    );
+    expect(updateClient.changeShipmentState).toHaveBeenCalledWith(
+      mockOrderId,
+      orderWithTransportOrderIdSet.version,
       'Ready'
     );
     expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('shouldNotBlockTransportOrderIdOrShipmentState_whenShippingAddressWriteFails', async () => {
+    const mockOrderId = 'test-order-id';
+    (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
+    (PubSubValidator.validateMessageFormat as MockFn).mockReturnValue({});
+    (PubSubValidator.decodeMessageData as MockFn).mockReturnValue({
+      notificationType: 'Message',
+      projectKey: 'dummy-project-key',
+      id: 'dummy-message-id',
+      version: 1,
+      sequenceNumber: 1,
+      resource: { typeId: 'order', id: mockOrderId },
+      resourceVersion: 1,
+      type: 'OrderCreated',
+      order: {
+        id: mockOrderId,
+      },
+    });
+    (PubSubValidator.validateDecodedMessage as MockFn).mockReturnValue(
+      mockOrderId
+    );
+
+    const mockOrder = {
+      body: {
+        cart: {
+          obj: {
+            custom: {
+              fields: {
+                ingridSessionId: mockIngridSessionId,
+              },
+            },
+          },
+        },
+        orderNumber: 'test-order-number',
+        id: mockOrderId,
+      },
+    };
+
+    const mockCommercetoolsGetOrders = mockApiRootOrderResponse(mockOrder);
+    (createApiRoot as MockFn).mockReturnValue({
+      orders: mockCommercetoolsGetOrders,
+    });
+
+    const orderWithTransportOrderIdSet = {
+      ...orderWithReadyShipmentState,
+      version: orderWithReadyShipmentState.version + 1,
+    };
+
+    jest
+      .spyOn(updateClient, 'setShippingAddress')
+      .mockRejectedValue(new Error('invalid address'));
+
+    jest
+      .spyOn(updateClient, 'setTransportOrderId')
+      .mockResolvedValue(orderWithTransportOrderIdSet);
+
+    jest
+      .spyOn(updateClient, 'changeShipmentState')
+      .mockResolvedValue(orderWithReadyShipmentState);
+
+    const mockIngridCompletionSuccessResponse: IngridCompleteSessionResponse = {
+      session: {
+        checkout_session_id: mockIngridSessionId,
+        status: 'COMPLETE',
+        updated_at: new Date().toISOString(),
+        cart: {
+          total_value: 0,
+          total_discount: 0,
+          items: [],
+          cart_id: 'test-cart-id',
+        },
+        delivery_groups: [
+          {
+            addresses: {
+              delivery_address: {
+                address_lines: ['Test Street 3'],
+                apartment_number: '',
+                city: 'Test City',
+                country: 'IL',
+                email: 'test@example.com',
+                external_id: '',
+                first_name: 'Daniel',
+                last_name: 'Test',
+                phone: '+972500000000',
+                postal_code: '4481300',
+                street: 'Test Street',
+                street_number: '3',
+              },
+            } as IngridAddresses,
+            category: {} as IngridDeliveryGroupCategory,
+            delivery_time: {} as IngridDeliveryGroupDeliveryTime,
+            group_id: '',
+            header: '',
+            items: [],
+            pricing: {} as IngridDeliveryGroupPricing,
+            selection: {} as IngridDeliveryGroupSelection,
+            shipping: {} as IngridDeliveryGroupShipping,
+            tos_id: 'dummy-tos-id',
+          },
+        ],
+        purchase_country: 'US',
+      },
+    };
+
+    (
+      IngridApiClient.prototype.completeCheckoutSession as MockFn
+    ).mockResolvedValue(mockIngridCompletionSuccessResponse);
+
+    await post(mockRequest as Request, mockResponse as Response);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(204);
+    expect(logger.error).toHaveBeenCalledWith(
+      `Failed to update shipping address for order ID ${mockOrderId}: invalid address`
+    );
+    expect(updateClient.setTransportOrderId).toHaveBeenCalledWith(
+      undefined,
+      mockOrderId,
+      undefined,
+      'dummy-tos-id'
+    );
+    expect(updateClient.changeShipmentState).toHaveBeenCalledWith(
+      mockOrderId,
+      orderWithTransportOrderIdSet.version,
+      'Ready'
+    );
   });
 
   it('should throw error when Ingrid session ID is not found', async () => {

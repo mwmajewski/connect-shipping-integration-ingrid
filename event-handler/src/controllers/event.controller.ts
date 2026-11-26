@@ -143,6 +143,37 @@ export const post = async (request: Request, response: Response) => {
     const existingTransportOrderId = commercetoolsOrder.shippingCustomFields
       ?.fields?.ingridTransportOrderId as string | undefined;
     let updatedCommercetoolsOrder;
+
+    if (ingridResponse.session.status === 'COMPLETE') {
+      // The cart's shippingAddress may be stale by the time the order was created - the cart can
+      // go out of sync with the address the customer actually completed the Ingrid checkout with
+      // for more than one reason, so the completed Ingrid session is the source of truth for the
+      // final address regardless of cause. Written before the transport order ID below so that
+      // nothing watching for the transport order ID (e.g. an export to Visma) can ever observe it
+      // without the matching address already in place.
+      const deliveryAddress =
+        ingridResponse.session.delivery_groups[0]?.addresses?.delivery_address;
+      if (deliveryAddress) {
+        try {
+          updatedCommercetoolsOrder = await setShippingAddress(
+            orderId,
+            commercetoolsOrder.version,
+            transformIngridAddressToCommercetoolsAddress(deliveryAddress)
+          );
+        } catch (error) {
+          // Don't let a rejected address write (e.g. commercetools address validation) block the
+          // transport order ID and shipment state updates that still need to happen below.
+          logger.error(
+            `Failed to update shipping address for order ID ${orderId}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      } else {
+        logger.error(
+          `Failed to get delivery address from Ingrid session ${ingridSessionId} for order ID ${orderId}, shipping address not updated.`
+        );
+      }
+    }
+
     if (transportOrderId) {
       logger.info(
         `Update transport order ID for the order ID ${commercetoolsOrder.id}: ${transportOrderId}.`
@@ -150,7 +181,9 @@ export const post = async (request: Request, response: Response) => {
       updatedCommercetoolsOrder = await setTransportOrderId(
         readConfiguration().ingridShippingCustomTypeKey,
         orderId,
-        commercetoolsOrder.version,
+        updatedCommercetoolsOrder
+          ? updatedCommercetoolsOrder.version
+          : commercetoolsOrder.version,
         transportOrderId
       );
     }
@@ -171,27 +204,6 @@ export const post = async (request: Request, response: Response) => {
     }
 
     if (ingridResponse.session.status === 'COMPLETE') {
-      // The cart's shippingAddress may be stale by the time the order was created (e.g. the
-      // customer finalised their address through the payment provider's own flow rather than
-      // the Ingrid widget, which only pushes address changes back to the cart on its own
-      // "delivery_address_changed" event) - the completed Ingrid session is the source of truth
-      // for the final address, so write it onto the order now rather than leaving the gap.
-      const deliveryAddress =
-        ingridResponse.session.delivery_groups[0]?.addresses?.delivery_address;
-      if (deliveryAddress) {
-        updatedCommercetoolsOrder = await setShippingAddress(
-          orderId,
-          updatedCommercetoolsOrder
-            ? updatedCommercetoolsOrder.version
-            : commercetoolsOrder.version,
-          transformIngridAddressToCommercetoolsAddress(deliveryAddress)
-        );
-      } else {
-        logger.error(
-          `Failed to get delivery address from Ingrid session ${ingridSessionId} for order ID ${orderId}, shipping address not updated.`
-        );
-      }
-
       const updateOrderResult = await changeShipmentState(
         orderId,
         updatedCommercetoolsOrder
