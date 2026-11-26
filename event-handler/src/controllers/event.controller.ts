@@ -16,6 +16,24 @@ import { SHIPMENT_STATE } from '../client/commercetools/types/commercetools.clie
 import type { IngridCompleteSessionResponse } from '../client/ingrid/types/ingrid.client.type';
 import { isValidIngridSessionId } from '../utils/ingrid-session-id.utils';
 import { transformIngridAddressToCommercetoolsAddress } from '../utils/transform.utils';
+
+/**
+ * Tells apart a transient shipping-address write failure (network error/timeout, a commercetools
+ * 5xx, or a conflict retry that was exhausted) from a permanent one (commercetools rejected the
+ * address data itself, which won't change on retry).
+ *
+ * @remarks
+ * This matters because a transient failure must not be swallowed here: letting the handler carry
+ * on to a terminal shipment state would let the guard at the top of this handler skip every
+ * future redelivery of this message, permanently leaving the address missing or stale with no
+ * path left to retry it.
+ */
+const isRetryableAddressWriteFailure = (error: unknown): boolean => {
+  const cause = error instanceof CustomError ? error.cause : error;
+  const statusCode = (cause as { statusCode?: number } | undefined)?.statusCode;
+  return statusCode === undefined || statusCode >= 500 || statusCode === 409;
+};
+
 /**
  * Exposed event POST endpoint.
  * Receives the Pub/Sub message and works with it
@@ -161,8 +179,11 @@ export const post = async (request: Request, response: Response) => {
             transformIngridAddressToCommercetoolsAddress(deliveryAddress)
           );
         } catch (error) {
-          // Don't let a rejected address write (e.g. commercetools address validation) block the
-          // transport order ID and shipment state updates that still need to happen below.
+          if (isRetryableAddressWriteFailure(error)) {
+            throw error;
+          }
+          // A permanent rejection (e.g. invalid address data) won't succeed on retry - log it and
+          // continue so it doesn't block the transport order ID and shipment state updates below.
           logger.error(
             `Failed to update shipping address for order ID ${orderId}: ${error instanceof Error ? error.message : String(error)}`
           );
