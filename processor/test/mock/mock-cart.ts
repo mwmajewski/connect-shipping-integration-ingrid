@@ -154,7 +154,7 @@ export const cart: Cart = {
   directDiscounts: [],
   custom: {
     type: { typeId: 'type', id: 'ingrid-session-type-id' },
-    fields: { ingridSessionId: 'ingrid-session-id' },
+    fields: { ingridSessionId: 'VM2-00112233445566778899aabbccddeeff' },
   },
   inventoryMode: 'None',
   taxMode: 'Platform',

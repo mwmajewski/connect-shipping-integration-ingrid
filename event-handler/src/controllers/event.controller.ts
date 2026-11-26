@@ -9,10 +9,36 @@ import type { IngridCompleteSessionRequestPayload } from '../client/ingrid/types
 import { DecodedMessageType } from '../types/index.types';
 import {
   changeShipmentState,
+  setShippingAddress,
   setTransportOrderId,
 } from '../client/commercetools/update.client';
 import { SHIPMENT_STATE } from '../client/commercetools/types/commercetools.client.type';
 import type { IngridCompleteSessionResponse } from '../client/ingrid/types/ingrid.client.type';
+import { isValidIngridSessionId } from '../utils/ingrid-session-id.utils';
+import { transformIngridAddressToCommercetoolsAddress } from '../utils/transform.utils';
+
+/**
+ * Tells apart a transient shipping-address write failure (network error/timeout, a commercetools
+ * 5xx, a rate limit, or a conflict retry that was exhausted) from a permanent one (commercetools
+ * rejected the address data itself, which won't change on retry).
+ *
+ * @remarks
+ * This matters because a transient failure must not be swallowed here: letting the handler carry
+ * on to a terminal shipment state would let the guard at the top of this handler skip every
+ * future redelivery of this message, permanently leaving the address missing or stale with no
+ * path left to retry it.
+ */
+const isRetryableAddressWriteFailure = (error: unknown): boolean => {
+  const cause = error instanceof CustomError ? error.cause : error;
+  const statusCode = (cause as { statusCode?: number } | undefined)?.statusCode;
+  return (
+    statusCode === undefined ||
+    statusCode >= 500 ||
+    statusCode === 409 ||
+    statusCode === 429
+  );
+};
+
 /**
  * Exposed event POST endpoint.
  * Receives the Pub/Sub message and works with it
@@ -78,7 +104,9 @@ export const post = async (request: Request, response: Response) => {
   const ingridSessionId =
     commercetoolsOrder.cart?.obj?.custom?.fields?.ingridSessionId;
 
-  if (!ingridSessionId) {
+  // the cart's ingridSessionId custom field is writable through the commercetools public API
+  // and must not be forwarded to the Ingrid API as if it were a real session ID
+  if (!ingridSessionId || !isValidIngridSessionId(ingridSessionId)) {
     throw new CustomError(
       202,
       ` Ingrid session ID not found for the order with ID ${commercetoolsOrder.id}.`
@@ -138,6 +166,40 @@ export const post = async (request: Request, response: Response) => {
     const existingTransportOrderId = commercetoolsOrder.shippingCustomFields
       ?.fields?.ingridTransportOrderId as string | undefined;
     let updatedCommercetoolsOrder;
+
+    if (ingridResponse.session.status === 'COMPLETE') {
+      // The cart's shippingAddress may be stale by the time the order was created - the cart can
+      // go out of sync with the address the customer actually completed the Ingrid checkout with
+      // for more than one reason, so the completed Ingrid session is the source of truth for the
+      // final address regardless of cause. Written before the transport order ID below so that
+      // nothing watching for the transport order ID (e.g. an export to Visma) can ever observe it
+      // without the matching address already in place.
+      const deliveryAddress =
+        ingridResponse.session.delivery_groups[0]?.addresses?.delivery_address;
+      if (deliveryAddress) {
+        try {
+          updatedCommercetoolsOrder = await setShippingAddress(
+            orderId,
+            commercetoolsOrder.version,
+            transformIngridAddressToCommercetoolsAddress(deliveryAddress)
+          );
+        } catch (error) {
+          if (isRetryableAddressWriteFailure(error)) {
+            throw error;
+          }
+          // A permanent rejection (e.g. invalid address data) won't succeed on retry - log it and
+          // continue so it doesn't block the transport order ID and shipment state updates below.
+          logger.error(
+            `Failed to update shipping address for order ID ${orderId}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      } else {
+        logger.error(
+          `Failed to get delivery address from Ingrid session ${ingridSessionId} for order ID ${orderId}, shipping address not updated.`
+        );
+      }
+    }
+
     if (transportOrderId) {
       logger.info(
         `Update transport order ID for the order ID ${commercetoolsOrder.id}: ${transportOrderId}.`
@@ -145,7 +207,9 @@ export const post = async (request: Request, response: Response) => {
       updatedCommercetoolsOrder = await setTransportOrderId(
         readConfiguration().ingridShippingCustomTypeKey,
         orderId,
-        commercetoolsOrder.version,
+        updatedCommercetoolsOrder
+          ? updatedCommercetoolsOrder.version
+          : commercetoolsOrder.version,
         transportOrderId
       );
     }

@@ -1,5 +1,6 @@
 import { createApiRoot } from './create.client';
 import CustomError from '../../errors/custom.error';
+import type { BaseAddress } from '@commercetools/platform-sdk';
 
 const isConcurrentModificationError = (error: unknown): boolean =>
   (error as { statusCode?: number })?.statusCode === 409;
@@ -67,6 +68,30 @@ export const changeShipmentState = async (
             {
               action: 'changeShipmentState',
               shipmentState: state,
+            },
+          ],
+        },
+      })
+      .execute()
+      .then((res) => res.body)
+  );
+
+export const setShippingAddress = async (
+  orderId: string,
+  orderVersion: number,
+  shippingAddress: BaseAddress
+) =>
+  updateOrderWithConcurrencyRetry(orderId, orderVersion, (version) =>
+    createApiRoot()
+      .orders()
+      .withId({ ID: orderId })
+      .post({
+        body: {
+          version,
+          actions: [
+            {
+              action: 'setShippingAddress',
+              address: shippingAddress,
             },
           ],
         },

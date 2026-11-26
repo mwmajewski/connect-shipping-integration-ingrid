@@ -77,8 +77,9 @@ export class IngridApiClient implements AbstractIngridClient {
    * @returns {Promise<IngridGetSessionResponse>} The response containing the latest session data
    */
   public async pullCheckoutSession(checkout_session_id: string): Promise<IngridGetSessionResponse> {
+    const query = new URLSearchParams({ checkout_session_id });
     const fn = async () => {
-      return this.client.get(IngridUrls.DELIVERY_CHECKOUT + `/session.pull?checkout_session_id=${checkout_session_id}`);
+      return this.client.get(`${IngridUrls.DELIVERY_CHECKOUT}/session.pull?${query}`);
     };
     const retryEngine = new RetryEngine(fn)
       .successfulPredicate((response) => response.status < 500)
@@ -102,8 +103,9 @@ export class IngridApiClient implements AbstractIngridClient {
    * @returns {Promise<IngridGetSessionResponse>} The response containing the session data
    */
   public async getCheckoutSession(checkout_session_id: string): Promise<IngridGetSessionResponse> {
+    const query = new URLSearchParams({ checkout_session_id });
     const fn = async () => {
-      return this.client.get(IngridUrls.DELIVERY_CHECKOUT + `/session.get?checkout_session_id=${checkout_session_id}`);
+      return this.client.get(`${IngridUrls.DELIVERY_CHECKOUT}/session.get?${query}`);
     };
     const retryEngine = new RetryEngine(fn)
       .successfulPredicate((response) => response.status < 500)

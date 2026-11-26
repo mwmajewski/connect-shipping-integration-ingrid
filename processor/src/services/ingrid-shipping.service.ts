@@ -6,6 +6,7 @@ import { CustomError } from '../libs/fastify/errors';
 import { AbstractShippingService } from './abstract-shipping.service';
 import {
   deductShippingCostFromCartTotalPrice,
+  isValidIngridSessionId,
   transformCommercetoolsCartToIngridPayload,
   transformIngridDeliveryGroupsToCommercetoolsDataTypes,
 } from './helpers';
@@ -51,9 +52,19 @@ export class IngridShippingService extends AbstractShippingService {
     const ingridSessionId = ctCart.custom?.fields?.ingridSessionId;
     const ingridCheckoutPayload = transformCommercetoolsCartToIngridPayload(ctCart, voucherCodes);
 
-    const ingridCheckoutSession = ingridSessionId
-      ? await this.refreshIngridSessionWithLatestVoucherCodes(ingridSessionId, voucherCodes)
-      : await this.ingridClient.createCheckoutSession(ingridCheckoutPayload);
+    // cart custom fields are writable through the commercetools public API, so a value that
+    // doesn't look like a real Ingrid session ID is treated as if no session existed, rather
+    // than forwarded to the Ingrid API
+    if (ingridSessionId && !isValidIngridSessionId(ingridSessionId)) {
+      appLogger.error(
+        `[WARN]: Ignoring malformed Ingrid session ID "${ingridSessionId}" on cart "${ctCart.id}", initiating a new session instead.`,
+      );
+    }
+
+    const ingridCheckoutSession =
+      ingridSessionId && isValidIngridSessionId(ingridSessionId)
+        ? await this.refreshIngridSessionWithLatestVoucherCodes(ingridSessionId, voucherCodes)
+        : await this.ingridClient.createCheckoutSession(ingridCheckoutPayload);
 
     const updatedCart = await this.updateCartWithIngridSessionId(
       ctCart,
@@ -122,9 +133,11 @@ export class IngridShippingService extends AbstractShippingService {
     // get Ingrid session id
     const ingridSessionId = ctCart.custom?.fields?.ingridSessionId;
 
-    if (!ingridSessionId) {
+    // cart custom fields are writable through the commercetools public API, so a malformed
+    // value is treated the same as a missing one rather than forwarded to the Ingrid API
+    if (!ingridSessionId || !isValidIngridSessionId(ingridSessionId)) {
       appLogger.error(
-        `[ERROR]: Failed to update composable commerce platform, Ingrid session ID on cart with ID "${ctCart.id}" not found.`,
+        `[ERROR]: Failed to update composable commerce platform, Ingrid session ID on cart with ID "${ctCart.id}" not found or invalid.`,
       );
       throw new CustomError({
         message: 'No Ingrid session id found on cart',

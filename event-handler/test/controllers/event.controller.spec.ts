@@ -27,7 +27,7 @@ import { mockApiRootOrderResponse } from '../mock/mock-api-root';
 
 type MockFn = jest.MockedFunction<any>;
 
-const mockIngridSessionId = 'test-session-id';
+const mockIngridSessionId = 'VM2-00112233445566778899aabbccddeeff';
 
 jest.mock('../../src/client/commercetools/create.client');
 jest.mock('../../src/utils/validate_requests.utils');
@@ -111,7 +111,7 @@ describe('Event Controller', () => {
 
     const mockIngridCompletionSuccessResponse: IngridCompleteSessionResponse = {
       session: {
-        checkout_session_id: 'test-session-id',
+        checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
         status: 'COMPLETE',
         updated_at: new Date().toISOString(),
         cart: {
@@ -164,6 +164,516 @@ describe('Event Controller', () => {
     );
   });
 
+  it('shouldLogErrorAndSkipAddressUpdate_whenCompletedIngridSessionHasNoDeliveryAddress', async () => {
+    const mockOrderId = 'test-order-id';
+    (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
+    (PubSubValidator.validateMessageFormat as MockFn).mockReturnValue({});
+    (PubSubValidator.decodeMessageData as MockFn).mockReturnValue({
+      notificationType: 'Message',
+      projectKey: 'dummy-project-key',
+      id: 'dummy-message-id',
+      version: 1,
+      sequenceNumber: 1,
+      resource: { typeId: 'order', id: mockOrderId },
+      resourceVersion: 1,
+      type: 'OrderCreated',
+      order: {
+        id: mockOrderId,
+      },
+    });
+    (PubSubValidator.validateDecodedMessage as MockFn).mockReturnValue(
+      mockOrderId
+    );
+
+    const mockOrder = {
+      body: {
+        cart: {
+          obj: {
+            custom: {
+              fields: {
+                ingridSessionId: mockIngridSessionId,
+              },
+            },
+          },
+        },
+        orderNumber: 'test-order-number',
+        id: mockOrderId,
+      },
+    };
+
+    const mockCommercetoolsGetOrders = mockApiRootOrderResponse(mockOrder);
+    (createApiRoot as MockFn).mockReturnValue({
+      orders: mockCommercetoolsGetOrders,
+    });
+
+    jest
+      .spyOn(updateClient, 'setTransportOrderId')
+      .mockResolvedValue(orderWithReadyShipmentState);
+
+    jest
+      .spyOn(updateClient, 'setShippingAddress')
+      .mockResolvedValue(orderWithReadyShipmentState);
+
+    jest
+      .spyOn(updateClient, 'changeShipmentState')
+      .mockResolvedValue(orderWithReadyShipmentState);
+
+    const mockIngridCompletionSuccessResponse: IngridCompleteSessionResponse = {
+      session: {
+        checkout_session_id: mockIngridSessionId,
+        status: 'COMPLETE',
+        updated_at: new Date().toISOString(),
+        cart: {
+          total_value: 0,
+          total_discount: 0,
+          items: [],
+          cart_id: 'test-cart-id',
+        },
+        delivery_groups: [
+          {
+            // no delivery address on the completed session - this is the gap fix #1 covers
+            addresses: {} as IngridAddresses,
+            category: {} as IngridDeliveryGroupCategory,
+            delivery_time: {} as IngridDeliveryGroupDeliveryTime,
+            group_id: '',
+            header: '',
+            items: [],
+            pricing: {} as IngridDeliveryGroupPricing,
+            selection: {} as IngridDeliveryGroupSelection,
+            shipping: {} as IngridDeliveryGroupShipping,
+            tos_id: 'dummy-tos-id',
+          },
+        ],
+        purchase_country: 'US',
+      },
+    };
+
+    (
+      IngridApiClient.prototype.completeCheckoutSession as MockFn
+    ).mockResolvedValue(mockIngridCompletionSuccessResponse);
+
+    await post(mockRequest as Request, mockResponse as Response);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(204);
+    expect(updateClient.setShippingAddress).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      `Failed to get delivery address from Ingrid session ${mockIngridSessionId} for order ID ${mockOrderId}, shipping address not updated.`
+    );
+    expect(updateClient.changeShipmentState).toHaveBeenCalled();
+  });
+
+  it('shouldWriteShippingAddress_whenCompletedIngridSessionHasDeliveryAddress', async () => {
+    const mockOrderId = 'test-order-id';
+    (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
+    (PubSubValidator.validateMessageFormat as MockFn).mockReturnValue({});
+    (PubSubValidator.decodeMessageData as MockFn).mockReturnValue({
+      notificationType: 'Message',
+      projectKey: 'dummy-project-key',
+      id: 'dummy-message-id',
+      version: 1,
+      sequenceNumber: 1,
+      resource: { typeId: 'order', id: mockOrderId },
+      resourceVersion: 1,
+      type: 'OrderCreated',
+      order: {
+        id: mockOrderId,
+      },
+    });
+    (PubSubValidator.validateDecodedMessage as MockFn).mockReturnValue(
+      mockOrderId
+    );
+
+    const mockOrder = {
+      body: {
+        cart: {
+          obj: {
+            custom: {
+              fields: {
+                ingridSessionId: mockIngridSessionId,
+              },
+            },
+          },
+        },
+        orderNumber: 'test-order-number',
+        id: mockOrderId,
+      },
+    };
+
+    const mockCommercetoolsGetOrders = mockApiRootOrderResponse(mockOrder);
+    (createApiRoot as MockFn).mockReturnValue({
+      orders: mockCommercetoolsGetOrders,
+    });
+
+    const orderWithShippingAddressSet = {
+      ...orderWithReadyShipmentState,
+      version: orderWithReadyShipmentState.version + 1,
+    };
+    const orderWithTransportOrderIdSet = {
+      ...orderWithReadyShipmentState,
+      version: orderWithShippingAddressSet.version + 1,
+    };
+
+    jest
+      .spyOn(updateClient, 'setTransportOrderId')
+      .mockResolvedValue(orderWithTransportOrderIdSet);
+
+    jest
+      .spyOn(updateClient, 'setShippingAddress')
+      .mockResolvedValue(orderWithShippingAddressSet);
+
+    jest
+      .spyOn(updateClient, 'changeShipmentState')
+      .mockResolvedValue(orderWithReadyShipmentState);
+
+    const mockIngridCompletionSuccessResponse: IngridCompleteSessionResponse = {
+      session: {
+        checkout_session_id: mockIngridSessionId,
+        status: 'COMPLETE',
+        updated_at: new Date().toISOString(),
+        cart: {
+          total_value: 0,
+          total_discount: 0,
+          items: [],
+          cart_id: 'test-cart-id',
+        },
+        delivery_groups: [
+          {
+            addresses: {
+              delivery_address: {
+                address_lines: ['Test Street 3'],
+                apartment_number: '',
+                city: 'Test City',
+                country: 'IL',
+                email: 'test@example.com',
+                external_id: '',
+                first_name: 'Daniel',
+                last_name: 'Test',
+                phone: '+972500000000',
+                postal_code: '4481300',
+                street: 'Test Street',
+                street_number: '3',
+              },
+            } as IngridAddresses,
+            category: {} as IngridDeliveryGroupCategory,
+            delivery_time: {} as IngridDeliveryGroupDeliveryTime,
+            group_id: '',
+            header: '',
+            items: [],
+            pricing: {} as IngridDeliveryGroupPricing,
+            selection: {} as IngridDeliveryGroupSelection,
+            shipping: {} as IngridDeliveryGroupShipping,
+            tos_id: 'dummy-tos-id',
+          },
+        ],
+        purchase_country: 'US',
+      },
+    };
+
+    (
+      IngridApiClient.prototype.completeCheckoutSession as MockFn
+    ).mockResolvedValue(mockIngridCompletionSuccessResponse);
+
+    await post(mockRequest as Request, mockResponse as Response);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(204);
+    expect(updateClient.setShippingAddress).toHaveBeenCalledWith(
+      mockOrderId,
+      undefined,
+      {
+        firstName: 'Daniel',
+        lastName: 'Test',
+        streetName: 'Test Street',
+        streetNumber: '3',
+        postalCode: '4481300',
+        apartment: '',
+        city: 'Test City',
+        country: 'IL',
+        region: undefined,
+        phone: '+972500000000',
+        email: 'test@example.com',
+      }
+    );
+    expect(updateClient.setTransportOrderId).toHaveBeenCalledWith(
+      undefined,
+      mockOrderId,
+      orderWithShippingAddressSet.version,
+      'dummy-tos-id'
+    );
+    expect(updateClient.changeShipmentState).toHaveBeenCalledWith(
+      mockOrderId,
+      orderWithTransportOrderIdSet.version,
+      'Ready'
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('shouldNotBlockTransportOrderIdOrShipmentState_whenShippingAddressWriteIsPermanentlyRejected', async () => {
+    const mockOrderId = 'test-order-id';
+    (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
+    (PubSubValidator.validateMessageFormat as MockFn).mockReturnValue({});
+    (PubSubValidator.decodeMessageData as MockFn).mockReturnValue({
+      notificationType: 'Message',
+      projectKey: 'dummy-project-key',
+      id: 'dummy-message-id',
+      version: 1,
+      sequenceNumber: 1,
+      resource: { typeId: 'order', id: mockOrderId },
+      resourceVersion: 1,
+      type: 'OrderCreated',
+      order: {
+        id: mockOrderId,
+      },
+    });
+    (PubSubValidator.validateDecodedMessage as MockFn).mockReturnValue(
+      mockOrderId
+    );
+
+    const mockOrder = {
+      body: {
+        cart: {
+          obj: {
+            custom: {
+              fields: {
+                ingridSessionId: mockIngridSessionId,
+              },
+            },
+          },
+        },
+        orderNumber: 'test-order-number',
+        id: mockOrderId,
+      },
+    };
+
+    const mockCommercetoolsGetOrders = mockApiRootOrderResponse(mockOrder);
+    (createApiRoot as MockFn).mockReturnValue({
+      orders: mockCommercetoolsGetOrders,
+    });
+
+    const orderWithTransportOrderIdSet = {
+      ...orderWithReadyShipmentState,
+      version: orderWithReadyShipmentState.version + 1,
+    };
+
+    jest.spyOn(updateClient, 'setShippingAddress').mockRejectedValue(
+      new CustomError(
+        502,
+        'Failed to update order "test-order-id". invalid address',
+        {
+          cause: Object.assign(new Error('invalid address'), {
+            statusCode: 400,
+          }),
+        }
+      )
+    );
+
+    jest
+      .spyOn(updateClient, 'setTransportOrderId')
+      .mockResolvedValue(orderWithTransportOrderIdSet);
+
+    jest
+      .spyOn(updateClient, 'changeShipmentState')
+      .mockResolvedValue(orderWithReadyShipmentState);
+
+    const mockIngridCompletionSuccessResponse: IngridCompleteSessionResponse = {
+      session: {
+        checkout_session_id: mockIngridSessionId,
+        status: 'COMPLETE',
+        updated_at: new Date().toISOString(),
+        cart: {
+          total_value: 0,
+          total_discount: 0,
+          items: [],
+          cart_id: 'test-cart-id',
+        },
+        delivery_groups: [
+          {
+            addresses: {
+              delivery_address: {
+                address_lines: ['Test Street 3'],
+                apartment_number: '',
+                city: 'Test City',
+                country: 'IL',
+                email: 'test@example.com',
+                external_id: '',
+                first_name: 'Daniel',
+                last_name: 'Test',
+                phone: '+972500000000',
+                postal_code: '4481300',
+                street: 'Test Street',
+                street_number: '3',
+              },
+            } as IngridAddresses,
+            category: {} as IngridDeliveryGroupCategory,
+            delivery_time: {} as IngridDeliveryGroupDeliveryTime,
+            group_id: '',
+            header: '',
+            items: [],
+            pricing: {} as IngridDeliveryGroupPricing,
+            selection: {} as IngridDeliveryGroupSelection,
+            shipping: {} as IngridDeliveryGroupShipping,
+            tos_id: 'dummy-tos-id',
+          },
+        ],
+        purchase_country: 'US',
+      },
+    };
+
+    (
+      IngridApiClient.prototype.completeCheckoutSession as MockFn
+    ).mockResolvedValue(mockIngridCompletionSuccessResponse);
+
+    await post(mockRequest as Request, mockResponse as Response);
+
+    expect(mockResponse.status).toHaveBeenCalledWith(204);
+    expect(logger.error).toHaveBeenCalledWith(
+      `Failed to update shipping address for order ID ${mockOrderId}: Failed to update order "test-order-id". invalid address`
+    );
+    expect(updateClient.setTransportOrderId).toHaveBeenCalledWith(
+      undefined,
+      mockOrderId,
+      undefined,
+      'dummy-tos-id'
+    );
+    expect(updateClient.changeShipmentState).toHaveBeenCalledWith(
+      mockOrderId,
+      orderWithTransportOrderIdSet.version,
+      'Ready'
+    );
+  });
+
+  it.each([
+    [
+      'a network error with no status code',
+      new CustomError(
+        502,
+        'Failed to update order "test-order-id". fetch failed',
+        { cause: new Error('fetch failed') }
+      ),
+    ],
+    [
+      'a commercetools 429 rate limit',
+      new CustomError(
+        502,
+        'Failed to update order "test-order-id". Too Many Requests',
+        {
+          cause: Object.assign(new Error('Too Many Requests'), {
+            statusCode: 429,
+          }),
+        }
+      ),
+    ],
+  ])(
+    'shouldNotProceedToReadyOrSkipRetry_whenShippingAddressWriteFailsTransiently (%s)',
+    async (_description, transientError) => {
+      const mockOrderId = 'test-order-id';
+      (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
+      (PubSubValidator.validateMessageFormat as MockFn).mockReturnValue({});
+      (PubSubValidator.decodeMessageData as MockFn).mockReturnValue({
+        notificationType: 'Message',
+        projectKey: 'dummy-project-key',
+        id: 'dummy-message-id',
+        version: 1,
+        sequenceNumber: 1,
+        resource: { typeId: 'order', id: mockOrderId },
+        resourceVersion: 1,
+        type: 'OrderCreated',
+        order: {
+          id: mockOrderId,
+        },
+      });
+      (PubSubValidator.validateDecodedMessage as MockFn).mockReturnValue(
+        mockOrderId
+      );
+
+      const mockOrder = {
+        body: {
+          cart: {
+            obj: {
+              custom: {
+                fields: {
+                  ingridSessionId: mockIngridSessionId,
+                },
+              },
+            },
+          },
+          orderNumber: 'test-order-number',
+          id: mockOrderId,
+        },
+      };
+
+      const mockCommercetoolsGetOrders = mockApiRootOrderResponse(mockOrder);
+      (createApiRoot as MockFn).mockReturnValue({
+        orders: mockCommercetoolsGetOrders,
+      });
+
+      jest
+        .spyOn(updateClient, 'setShippingAddress')
+        .mockRejectedValue(transientError);
+
+      jest.spyOn(updateClient, 'setTransportOrderId');
+      jest.spyOn(updateClient, 'changeShipmentState');
+
+      const mockIngridCompletionSuccessResponse: IngridCompleteSessionResponse =
+        {
+          session: {
+            checkout_session_id: mockIngridSessionId,
+            status: 'COMPLETE',
+            updated_at: new Date().toISOString(),
+            cart: {
+              total_value: 0,
+              total_discount: 0,
+              items: [],
+              cart_id: 'test-cart-id',
+            },
+            delivery_groups: [
+              {
+                addresses: {
+                  delivery_address: {
+                    address_lines: ['Test Street 3'],
+                    apartment_number: '',
+                    city: 'Test City',
+                    country: 'IL',
+                    email: 'test@example.com',
+                    external_id: '',
+                    first_name: 'Daniel',
+                    last_name: 'Test',
+                    phone: '+972500000000',
+                    postal_code: '4481300',
+                    street: 'Test Street',
+                    street_number: '3',
+                  },
+                } as IngridAddresses,
+                category: {} as IngridDeliveryGroupCategory,
+                delivery_time: {} as IngridDeliveryGroupDeliveryTime,
+                group_id: '',
+                header: '',
+                items: [],
+                pricing: {} as IngridDeliveryGroupPricing,
+                selection: {} as IngridDeliveryGroupSelection,
+                shipping: {} as IngridDeliveryGroupShipping,
+                tos_id: 'dummy-tos-id',
+              },
+            ],
+            purchase_country: 'US',
+          },
+        };
+
+      (
+        IngridApiClient.prototype.completeCheckoutSession as MockFn
+      ).mockResolvedValue(mockIngridCompletionSuccessResponse);
+
+      await expect(
+        post(mockRequest as Request, mockResponse as Response)
+      ).rejects.toBe(transientError);
+
+      // it must not reach a terminal shipment state, so a redelivered message can still retry
+      // the address write - reaching Ready here would make the idempotency guard at the top of
+      // this handler skip every future redelivery, leaving the address permanently missing
+      expect(updateClient.setTransportOrderId).not.toHaveBeenCalled();
+      expect(updateClient.changeShipmentState).not.toHaveBeenCalled();
+    }
+  );
+
   it('should throw error when Ingrid session ID is not found', async () => {
     const mockOrderId = 'test-order-id';
     (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
@@ -200,6 +710,46 @@ describe('Event Controller', () => {
     ).rejects.toThrow(
       `Ingrid session ID not found for the order with ID ${mockOrder.body.id}.`
     );
+  });
+
+  it('should throw error when Ingrid session ID on the order is malformed', async () => {
+    // the order's cart ingridSessionId custom field is writable through the commercetools
+    // public API and must not be forwarded to the Ingrid API as if it were a real session ID
+    const mockOrderId = 'test-order-id';
+    (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
+    (PubSubValidator.validateMessageFormat as MockFn).mockReturnValue({});
+    (PubSubValidator.decodeMessageData as MockFn).mockReturnValue({
+      orderId: mockOrderId,
+    });
+
+    const mockOrder = {
+      body: {
+        cart: {
+          obj: {
+            custom: {
+              fields: { ingridSessionId: '//158.94.211.77:1234/path' },
+            },
+          },
+        },
+        id: 'test-order-id',
+        orderNumber: 'test-order-number',
+      },
+    };
+    const mockCommercetoolsGetOrders = mockApiRootOrderResponse(mockOrder);
+
+    (createApiRoot as MockFn).mockReturnValue({
+      orders: mockCommercetoolsGetOrders,
+    });
+
+    await expect(
+      post(mockRequest as Request, mockResponse as Response)
+    ).rejects.toThrow(
+      `Ingrid session ID not found for the order with ID ${mockOrder.body.id}.`
+    );
+    expect(
+      IngridApiClient.prototype.completeCheckoutSession
+    ).not.toHaveBeenCalled();
+    expect(IngridApiClient.prototype.getCheckoutSession).not.toHaveBeenCalled();
   });
 
   it('should throw error when PubSub validation fails', async () => {
@@ -239,7 +789,7 @@ describe('Event Controller', () => {
           obj: {
             custom: {
               fields: {
-                ingridSessionId: 'test-session-id',
+                ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
               },
             },
           },
@@ -309,7 +859,7 @@ describe('Event Controller', () => {
           obj: {
             custom: {
               fields: {
-                ingridSessionId: 'test-session-id',
+                ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
               },
             },
           },
@@ -334,7 +884,7 @@ describe('Event Controller', () => {
 
     const mockIngridSessionResponse: IngridCompleteSessionResponse = {
       session: {
-        checkout_session_id: 'test-session-id',
+        checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
         status: 'COMPLETE',
         updated_at: new Date().toISOString(),
         cart: {
@@ -379,7 +929,7 @@ describe('Event Controller', () => {
     // Verify the session was looked up, the transport order ID was set and the
     // shipment state was moved to READY instead of being canceled
     expect(IngridApiClient.prototype.getCheckoutSession).toHaveBeenCalledWith(
-      'test-session-id'
+      'VM2-00112233445566778899aabbccddeeff'
     );
     expect(updateClient.setTransportOrderId).toHaveBeenCalled();
     expect(updateClient.changeShipmentState).toHaveBeenCalledWith(
@@ -410,7 +960,7 @@ describe('Event Controller', () => {
           obj: {
             custom: {
               fields: {
-                ingridSessionId: 'test-session-id',
+                ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
               },
             },
           },
@@ -459,7 +1009,7 @@ describe('Event Controller', () => {
           obj: {
             custom: {
               fields: {
-                ingridSessionId: 'test-session-id',
+                ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
               },
             },
           },
@@ -479,7 +1029,7 @@ describe('Event Controller', () => {
 
     const mockIngridCompleteButNoTransportId: IngridCompleteSessionResponse = {
       session: {
-        checkout_session_id: 'test-session-id',
+        checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
         status: 'COMPLETE',
         updated_at: new Date().toISOString(),
         cart: {
@@ -536,7 +1086,7 @@ describe('Event Controller', () => {
           obj: {
             custom: {
               fields: {
-                ingridSessionId: 'test-session-id',
+                ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
               },
             },
           },
@@ -593,7 +1143,7 @@ describe('Event Controller', () => {
           obj: {
             custom: {
               fields: {
-                ingridSessionId: 'test-session-id',
+                ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
               },
             },
           },
@@ -615,7 +1165,7 @@ describe('Event Controller', () => {
     // Mock IngridApiClient with INCOMPLETE status
     const mockIngridResponse: IngridCompleteSessionResponse = {
       session: {
-        checkout_session_id: 'test-session-id',
+        checkout_session_id: 'VM2-00112233445566778899aabbccddeeff',
         status: 'INCOMPLETE',
         updated_at: new Date().toISOString(),
         cart: {
@@ -651,7 +1201,7 @@ describe('Event Controller', () => {
     // Verify the response
     expect(mockResponse.status).toHaveBeenCalledWith(204);
     expect(mockResponse.send).toHaveBeenCalledWith({
-      ingridSessionId: 'test-session-id',
+      ingridSessionId: 'VM2-00112233445566778899aabbccddeeff',
       status: 'INCOMPLETE',
     });
 

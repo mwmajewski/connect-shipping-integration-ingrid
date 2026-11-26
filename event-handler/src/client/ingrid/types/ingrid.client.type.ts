@@ -33,7 +33,7 @@ export type IngridSession = {
 export type IngridAddresses = {
   billing_address: IngridBillingAddress;
   customer: IngridCustomerAddress;
-  delivery_address: IngridAddress;
+  delivery_address: IngridDeliveryAddress;
   location: IngridPickupLocation;
   search_address: IngridAddress;
 };
@@ -188,6 +188,27 @@ export type IngridBillingAddress = {
   street_number: string;
   vat?: string;
   vat_type?: string;
+};
+
+export type IngridDeliveryAddress = {
+  address_lines: string[];
+  apartment_number: string;
+  attn?: string;
+  care_of?: string;
+  city: string;
+  coordinates?: IngridCoordinates;
+  country: string;
+  door_code?: string;
+  email: string;
+  external_id: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  phone_country?: string;
+  postal_code: string;
+  region?: string;
+  street: string;
+  street_number: string;
 };
 
 export type IngridCustomerAddress = {
