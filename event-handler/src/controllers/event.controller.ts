@@ -19,8 +19,8 @@ import { transformIngridAddressToCommercetoolsAddress } from '../utils/transform
 
 /**
  * Tells apart a transient shipping-address write failure (network error/timeout, a commercetools
- * 5xx, or a conflict retry that was exhausted) from a permanent one (commercetools rejected the
- * address data itself, which won't change on retry).
+ * 5xx, a rate limit, or a conflict retry that was exhausted) from a permanent one (commercetools
+ * rejected the address data itself, which won't change on retry).
  *
  * @remarks
  * This matters because a transient failure must not be swallowed here: letting the handler carry
@@ -31,7 +31,12 @@ import { transformIngridAddressToCommercetoolsAddress } from '../utils/transform
 const isRetryableAddressWriteFailure = (error: unknown): boolean => {
   const cause = error instanceof CustomError ? error.cause : error;
   const statusCode = (cause as { statusCode?: number } | undefined)?.statusCode;
-  return statusCode === undefined || statusCode >= 500 || statusCode === 409;
+  return (
+    statusCode === undefined ||
+    statusCode >= 500 ||
+    statusCode === 409 ||
+    statusCode === 429
+  );
 };
 
 /**

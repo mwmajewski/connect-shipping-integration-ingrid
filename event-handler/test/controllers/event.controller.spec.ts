@@ -541,119 +541,138 @@ describe('Event Controller', () => {
     );
   });
 
-  it('shouldNotProceedToReadyOrSkipRetry_whenShippingAddressWriteFailsTransiently', async () => {
-    const mockOrderId = 'test-order-id';
-    (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
-    (PubSubValidator.validateMessageFormat as MockFn).mockReturnValue({});
-    (PubSubValidator.decodeMessageData as MockFn).mockReturnValue({
-      notificationType: 'Message',
-      projectKey: 'dummy-project-key',
-      id: 'dummy-message-id',
-      version: 1,
-      sequenceNumber: 1,
-      resource: { typeId: 'order', id: mockOrderId },
-      resourceVersion: 1,
-      type: 'OrderCreated',
-      order: {
-        id: mockOrderId,
-      },
-    });
-    (PubSubValidator.validateDecodedMessage as MockFn).mockReturnValue(
-      mockOrderId
-    );
+  it.each([
+    [
+      'a network error with no status code',
+      new CustomError(
+        502,
+        'Failed to update order "test-order-id". fetch failed',
+        { cause: new Error('fetch failed') }
+      ),
+    ],
+    [
+      'a commercetools 429 rate limit',
+      new CustomError(
+        502,
+        'Failed to update order "test-order-id". Too Many Requests',
+        {
+          cause: Object.assign(new Error('Too Many Requests'), {
+            statusCode: 429,
+          }),
+        }
+      ),
+    ],
+  ])(
+    'shouldNotProceedToReadyOrSkipRetry_whenShippingAddressWriteFailsTransiently (%s)',
+    async (_description, transientError) => {
+      const mockOrderId = 'test-order-id';
+      (PubSubValidator.validateRequestBody as MockFn).mockReturnValue({});
+      (PubSubValidator.validateMessageFormat as MockFn).mockReturnValue({});
+      (PubSubValidator.decodeMessageData as MockFn).mockReturnValue({
+        notificationType: 'Message',
+        projectKey: 'dummy-project-key',
+        id: 'dummy-message-id',
+        version: 1,
+        sequenceNumber: 1,
+        resource: { typeId: 'order', id: mockOrderId },
+        resourceVersion: 1,
+        type: 'OrderCreated',
+        order: {
+          id: mockOrderId,
+        },
+      });
+      (PubSubValidator.validateDecodedMessage as MockFn).mockReturnValue(
+        mockOrderId
+      );
 
-    const mockOrder = {
-      body: {
-        cart: {
-          obj: {
-            custom: {
-              fields: {
-                ingridSessionId: mockIngridSessionId,
+      const mockOrder = {
+        body: {
+          cart: {
+            obj: {
+              custom: {
+                fields: {
+                  ingridSessionId: mockIngridSessionId,
+                },
               },
             },
           },
+          orderNumber: 'test-order-number',
+          id: mockOrderId,
         },
-        orderNumber: 'test-order-number',
-        id: mockOrderId,
-      },
-    };
+      };
 
-    const mockCommercetoolsGetOrders = mockApiRootOrderResponse(mockOrder);
-    (createApiRoot as MockFn).mockReturnValue({
-      orders: mockCommercetoolsGetOrders,
-    });
+      const mockCommercetoolsGetOrders = mockApiRootOrderResponse(mockOrder);
+      (createApiRoot as MockFn).mockReturnValue({
+        orders: mockCommercetoolsGetOrders,
+      });
 
-    const transientError = new CustomError(
-      502,
-      'Failed to update order "test-order-id". fetch failed',
-      { cause: new Error('fetch failed') }
-    );
+      jest
+        .spyOn(updateClient, 'setShippingAddress')
+        .mockRejectedValue(transientError);
 
-    jest
-      .spyOn(updateClient, 'setShippingAddress')
-      .mockRejectedValue(transientError);
+      jest.spyOn(updateClient, 'setTransportOrderId');
+      jest.spyOn(updateClient, 'changeShipmentState');
 
-    jest.spyOn(updateClient, 'setTransportOrderId');
-    jest.spyOn(updateClient, 'changeShipmentState');
-
-    const mockIngridCompletionSuccessResponse: IngridCompleteSessionResponse = {
-      session: {
-        checkout_session_id: mockIngridSessionId,
-        status: 'COMPLETE',
-        updated_at: new Date().toISOString(),
-        cart: {
-          total_value: 0,
-          total_discount: 0,
-          items: [],
-          cart_id: 'test-cart-id',
-        },
-        delivery_groups: [
-          {
-            addresses: {
-              delivery_address: {
-                address_lines: ['Test Street 3'],
-                apartment_number: '',
-                city: 'Test City',
-                country: 'IL',
-                email: 'test@example.com',
-                external_id: '',
-                first_name: 'Daniel',
-                last_name: 'Test',
-                phone: '+972500000000',
-                postal_code: '4481300',
-                street: 'Test Street',
-                street_number: '3',
+      const mockIngridCompletionSuccessResponse: IngridCompleteSessionResponse =
+        {
+          session: {
+            checkout_session_id: mockIngridSessionId,
+            status: 'COMPLETE',
+            updated_at: new Date().toISOString(),
+            cart: {
+              total_value: 0,
+              total_discount: 0,
+              items: [],
+              cart_id: 'test-cart-id',
+            },
+            delivery_groups: [
+              {
+                addresses: {
+                  delivery_address: {
+                    address_lines: ['Test Street 3'],
+                    apartment_number: '',
+                    city: 'Test City',
+                    country: 'IL',
+                    email: 'test@example.com',
+                    external_id: '',
+                    first_name: 'Daniel',
+                    last_name: 'Test',
+                    phone: '+972500000000',
+                    postal_code: '4481300',
+                    street: 'Test Street',
+                    street_number: '3',
+                  },
+                } as IngridAddresses,
+                category: {} as IngridDeliveryGroupCategory,
+                delivery_time: {} as IngridDeliveryGroupDeliveryTime,
+                group_id: '',
+                header: '',
+                items: [],
+                pricing: {} as IngridDeliveryGroupPricing,
+                selection: {} as IngridDeliveryGroupSelection,
+                shipping: {} as IngridDeliveryGroupShipping,
+                tos_id: 'dummy-tos-id',
               },
-            } as IngridAddresses,
-            category: {} as IngridDeliveryGroupCategory,
-            delivery_time: {} as IngridDeliveryGroupDeliveryTime,
-            group_id: '',
-            header: '',
-            items: [],
-            pricing: {} as IngridDeliveryGroupPricing,
-            selection: {} as IngridDeliveryGroupSelection,
-            shipping: {} as IngridDeliveryGroupShipping,
-            tos_id: 'dummy-tos-id',
+            ],
+            purchase_country: 'US',
           },
-        ],
-        purchase_country: 'US',
-      },
-    };
+        };
 
-    (
-      IngridApiClient.prototype.completeCheckoutSession as MockFn
-    ).mockResolvedValue(mockIngridCompletionSuccessResponse);
+      (
+        IngridApiClient.prototype.completeCheckoutSession as MockFn
+      ).mockResolvedValue(mockIngridCompletionSuccessResponse);
 
-    await expect(
-      post(mockRequest as Request, mockResponse as Response)
-    ).rejects.toBe(transientError);
+      await expect(
+        post(mockRequest as Request, mockResponse as Response)
+      ).rejects.toBe(transientError);
 
-    // it must not reach a terminal shipment state, so a redelivered message can still retry
-    // the address write - reaching Ready here would make the idempotency guard at the top of
-    // this handler skip every future redelivery, leaving the address permanently missing
-    expect(updateClient.setTransportOrderId).not.toHaveBeenCalled();
-    expect(updateClient.changeShipmentState).not.toHaveBeenCalled();
-  });
+      // it must not reach a terminal shipment state, so a redelivered message can still retry
+      // the address write - reaching Ready here would make the idempotency guard at the top of
+      // this handler skip every future redelivery, leaving the address permanently missing
+      expect(updateClient.setTransportOrderId).not.toHaveBeenCalled();
+      expect(updateClient.changeShipmentState).not.toHaveBeenCalled();
+    }
+  );
 
   it('should throw error when Ingrid session ID is not found', async () => {
     const mockOrderId = 'test-order-id';
